@@ -1,0 +1,19 @@
+services:
+  dashboard:
+    build:
+      context: .
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+        GIT_COMMIT_TIME: ${GIT_COMMIT_TIME:-unknown}
+    image: eeefut-dashboard:latest
+    container_name: eeefut-dashboard
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./data/cache:/data/cache
+    environment:
+      EEEFUT_GIT_SHA: ${GIT_SHA:-unknown}
+      EEEFUT_GIT_COMMIT_TIME: ${GIT_COMMIT_TIME:-unknown}
+      EEEFUT_SEASON: ${EEEFUT_SEASON:-NFL:2025}
+      EEEFUT_CACHE: /data/cache
+    restart: unless-stopped
