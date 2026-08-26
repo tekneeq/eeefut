@@ -67,7 +67,12 @@ else
     CERTBOT_ARGS+=(--register-unsafely-without-email)
 fi
 if [ "$WANT_WWW" -eq 1 ]; then
-    CERTBOT_ARGS+=(-d "www.${DOMAIN}")
+    if python3 -c "import socket; socket.getaddrinfo('www.${DOMAIN}', 80)" >/dev/null 2>&1; then
+        CERTBOT_ARGS+=(-d "www.${DOMAIN}")
+    else
+        log "WARNING: www.${DOMAIN} has no DNS A/AAAA record (NXDOMAIN)."
+        log "Issuing a cert for ${DOMAIN} only. Add a www A/CNAME in Route53, then re-run with --www."
+    fi
 fi
 
 log "requesting certificate: ${CERTBOT_ARGS[*]}"
