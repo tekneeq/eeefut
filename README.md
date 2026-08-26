@@ -2,7 +2,7 @@
 
 NFL **Matches + Similar** dashboard with a dark Revenant look.
 
-Freeze an in-play snapshot (cut minute / game clock, scoring times, yards / first downs) and rank last-season lookalikes. History is cached under `~/.eeefut/cache`.
+Freeze an in-play snapshot (cut minute / game clock, scoring times, yards / first downs) and rank last-season lookalikes. History is cached under `~/.eeefut/cache` (or `./data/cache` on EC2).
 
 ## Quick start
 
@@ -31,3 +31,54 @@ uv run pytest
 - Minute-level yard ramps are reconstructed from full-game box scores (deterministic per game). Scoring plays are placed from the final score.
 - Cut minutes are elapsed game clock 1–60 (four 15-minute quarters). Minute 28 is Q2 2:00.
 - The Chiefs 28′ fixture is injected as an explicit demo snapshot for Similar.
+- Docker binds `0.0.0.0:8082` and mounts `./data/cache` so warm data survives rebuilds.
+
+## Deploy on EC2 (same pattern as `tekneeq/julia` and `tekneeq/eeesoc`)
+
+Flow on every push/merge to `main`:
+
+1. GitHub Actions workflow `.github/workflows/deploy-ec2.yml` SSHes into the box
+2. `git pull --ff-only origin main`
+3. `./deploy.sh` → `./restart.sh` (docker rebuild + `docker run --restart unless-stopped`)
+4. Container entrypoint warms `NFL:2025` cache (no-op when already warm) and serves `:8082`
+
+### One-time bootstrap on the EC2 host
+
+```bash
+# Docker + git already assumed (same box as julia / eeesoc is fine)
+git clone https://github.com/tekneeq/eeefut.git ~/eeefut
+cd ~/eeefut
+chmod +x deploy.sh restart.sh scripts/docker-entrypoint.sh
+./deploy.sh
+```
+
+Optional nginx reverse proxy (julia owns `:80`, eeesoc sample uses `:8080`, so this listens on `:8083`):
+
+```bash
+sudo cp scripts/nginx-eeefut-dashboard.conf /etc/nginx/conf.d/eeefut-dashboard.conf
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Open security group inbound for `8082` (direct) and/or `8083` (nginx).
+
+### Auto-deploy on push
+
+Pushes to `main` trigger `.github/workflows/deploy-ec2.yml`, which SSHes in and runs `./deploy.sh`.
+
+One-time GitHub setup (repo → **Settings → Secrets and variables → Actions**):
+
+| Secret | Example | Notes |
+| --- | --- | --- |
+| `EC2_HOST` | `54.91.65.71` | Same host as julia / eeesoc is fine |
+| `EC2_USER` | `ec2-user` | |
+| `EC2_SSH_PRIVATE_KEY` | full `.pem` contents | Include `BEGIN`/`END` lines |
+| `EC2_SSH_PORT` | `22` | Optional |
+| `EC2_APP_DIR` | `/home/ec2-user/eeefut` | Optional; **must differ** from julia’s `~/julia` and eeesoc’s `~/eeesoc` |
+
+Manual redeploy / diagnostics: Actions → **Deploy to EC2** / **EC2 status** → Run workflow.
+
+Local-on-box redeploy anytime:
+
+```bash
+cd ~/eeefut && ./deploy.sh
+```
