@@ -30,10 +30,12 @@ jobs:
             echo "=== git ==="
             git rev-parse --short HEAD
             git log -1 --format='%h %ci %s'
-            echo "=== health ==="
-            curl -fsS http://127.0.0.1:8082/health || echo "(health failed)"
-            echo "=== meta ==="
-            curl -fsS http://127.0.0.1:8082/api/meta || true
+            echo "=== health :8082 ==="
+            curl -fsS http://127.0.0.1:8082/health || echo "(container health failed)"
+            echo "=== health :80 ==="
+            curl -fsS http://127.0.0.1/health || echo "(nginx :80 health failed)"
+            echo "=== meta via :80 ==="
+            curl -fsS http://127.0.0.1/api/meta || true
             echo
             echo "=== recent container logs ==="
             docker logs --tail 60 eeefut-dashboard 2>&1 || true
