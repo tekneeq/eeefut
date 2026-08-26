@@ -67,7 +67,13 @@ cd ~/eeefut
 ./scripts/install-nginx-80.sh
 ```
 
-The installer moves `julia-dashboard.conf` aside if it still owns `listen 80 default_server`, then reloads nginx. Open the security group inbound for **80** (and 8082 if you still want the container port direct).
+The installer:
+
+- comments Amazon Linux’s stock `server { listen 80; }` out of `/etc/nginx/nginx.conf`
+- moves any other `conf.d` snippet that binds `:80` (julia / default)
+- `systemctl enable --now nginx` if the unit is inactive (reload alone fails)
+
+Open the security group inbound for **80** (and 8082 if you still want the container port direct).
 
 ### Auto-deploy on push
 
