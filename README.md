@@ -52,14 +52,22 @@ chmod +x deploy.sh restart.sh scripts/docker-entrypoint.sh
 ./deploy.sh
 ```
 
-Optional nginx reverse proxy (julia owns `:80`, eeesoc sample uses `:8080`, so this listens on `:8083`):
+Nginx on **:80** routes to the dashboard containers (replaces julia’s exclusive `:80` default):
+
+| Public path | Upstream |
+| --- | --- |
+| `/` and `/eeefut/` | eeefut `127.0.0.1:8082` |
+| `/eeesoc/` | eeesoc `127.0.0.1:8081` |
+| `/julia/` | julia `127.0.0.1:8501` |
+| `/health` | eeefut `/health` |
+| `/dashboards` | link list |
 
 ```bash
-sudo cp scripts/nginx-eeefut-dashboard.conf /etc/nginx/conf.d/eeefut-dashboard.conf
-sudo nginx -t && sudo systemctl reload nginx
+cd ~/eeefut
+./scripts/install-nginx-80.sh
 ```
 
-Open security group inbound for `8082` (direct) and/or `8083` (nginx).
+The installer moves `julia-dashboard.conf` aside if it still owns `listen 80 default_server`, then reloads nginx. Open the security group inbound for **80** (and 8082 if you still want the container port direct).
 
 ### Auto-deploy on push
 

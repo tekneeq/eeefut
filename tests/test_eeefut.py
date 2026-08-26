@@ -224,3 +224,17 @@ def test_cli_host_flag_defaults():
     ns = build_parser().parse_args(["--dashboard", "--host", "0.0.0.0", "--port", "8082"])
     assert ns.host == "0.0.0.0"
     assert ns.port == 8082
+
+
+def test_nginx_routes_port_80_to_dashboard_ports():
+    from pathlib import Path
+
+    conf = Path(__file__).resolve().parents[1] / "scripts" / "nginx-eeefut-dashboard.conf"
+    text = conf.read_text()
+    assert "listen 80 default_server" in text
+    assert "server 127.0.0.1:8082" in text
+    assert "server 127.0.0.1:8081" in text
+    assert "server 127.0.0.1:8501" in text
+    assert "location /eeesoc/" in text
+    assert "location /julia/" in text
+    assert "proxy_pass http://eeefut_dashboard" in text
