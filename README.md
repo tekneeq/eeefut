@@ -35,6 +35,8 @@ uv run pytest
 
 ## Deploy on EC2 (same pattern as `tekneeq/julia` and `tekneeq/eeesoc`)
 
+eeefut, eeesoc, and julia each have **their own instance**. This repo only SSHes into the eeefut box.
+
 Flow on every push/merge to `main`:
 
 1. GitHub Actions workflow `.github/workflows/deploy-ec2.yml` SSHes into the box
@@ -45,29 +47,20 @@ Flow on every push/merge to `main`:
 ### One-time bootstrap on the EC2 host
 
 ```bash
-# Docker + git already assumed (same box as julia / eeesoc is fine)
 git clone https://github.com/tekneeq/eeefut.git ~/eeefut
 cd ~/eeefut
 chmod +x deploy.sh restart.sh scripts/docker-entrypoint.sh
 ./deploy.sh
 ```
 
-Nginx on **:80** routes to the dashboard containers (replaces julia’s exclusive `:80` default):
-
-| Public path | Upstream |
-| --- | --- |
-| `/` and `/eeefut/` | eeefut `127.0.0.1:8082` |
-| `/eeesoc/` | eeesoc `127.0.0.1:8081` |
-| `/julia/` | julia `127.0.0.1:8501` |
-| `/health` | eeefut `/health` |
-| `/dashboards` | link list |
+Nginx on this box is julia-style: **:80 → 127.0.0.1:8082**.
 
 ```bash
 cd ~/eeefut
 ./scripts/install-nginx-80.sh
 ```
 
-The installer moves `julia-dashboard.conf` aside if it still owns `listen 80 default_server`, then reloads nginx. Open the security group inbound for **80** (and 8082 if you still want the container port direct).
+The installer comments Amazon Linux’s stock `server { listen 80; }` out of `/etc/nginx/nginx.conf` and starts nginx if the unit is inactive. Open the security group inbound for **80**.
 
 ### Auto-deploy on push
 
@@ -77,11 +70,11 @@ One-time GitHub setup (repo → **Settings → Secrets and variables → Actions
 
 | Secret | Example | Notes |
 | --- | --- | --- |
-| `EC2_HOST` | `54.91.65.71` | Same host as julia / eeesoc is fine |
+| `EC2_HOST` | `54.91.65.71` | This instance only (not julia / eeesoc) |
 | `EC2_USER` | `ec2-user` | |
 | `EC2_SSH_PRIVATE_KEY` | full `.pem` contents | Include `BEGIN`/`END` lines |
 | `EC2_SSH_PORT` | `22` | Optional |
-| `EC2_APP_DIR` | `/home/ec2-user/eeefut` | Optional; **must differ** from julia’s `~/julia` and eeesoc’s `~/eeesoc` |
+| `EC2_APP_DIR` | `/home/ec2-user/eeefut` | Optional |
 
 Manual redeploy / diagnostics: Actions → **Deploy to EC2** / **EC2 status** → Run workflow.
 

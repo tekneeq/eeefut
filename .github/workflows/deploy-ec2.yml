@@ -1,5 +1,6 @@
-# Redeploy the dashboard on EC2 whenever ``main`` advances.
-# Same pattern as tekneeq/julia and tekneeq/eeesoc deploy-ec2.yml.
+# Redeploy the dashboard on this instance whenever ``main`` advances.
+# Same SSH pattern as tekneeq/julia and tekneeq/eeesoc — each app has
+# its own EC2 box, so EC2_HOST here must be the eeefut instance.
 #
 # Required GitHub repo secrets (Settings → Secrets and variables → Actions):
 #   EC2_HOST            public IP or DNS of the instance
