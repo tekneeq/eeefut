@@ -213,6 +213,9 @@ def test_dashboard_preset_similar_api(tmp_path, monkeypatch):
         assert "Chiefs 28" in html
         health = urllib.request.urlopen(base + "/health", timeout=5).read()
         assert health == b"ok\n"
+        head_req = urllib.request.Request(base + "/health", method="HEAD")
+        with urllib.request.urlopen(head_req, timeout=5) as resp:
+            assert resp.status == 200
     finally:
         httpd.shutdown()
         httpd.server_close()
@@ -233,11 +236,23 @@ def test_nginx_routes_port_80_to_dashboard_ports():
     text = conf.read_text()
     assert "listen 80 default_server" in text
     assert "server 127.0.0.1:8082" in text
+    assert "server_name eeefut.com www.eeefut.com _;" in text
+    assert "acme-challenge" in text
     assert "proxy_pass http://eeefut_dashboard" in text
     assert "8081" not in text
-    assert "8501" not in text
     assert "/eeesoc/" not in text
     assert "/julia/" not in text
+
+
+def test_nginx_https_server_name_and_443():
+    from pathlib import Path
+
+    conf = Path(__file__).resolve().parents[1] / "scripts" / "nginx-eeefut-https.conf"
+    text = conf.read_text()
+    assert "listen 443 ssl" in text
+    assert "server_name eeefut.com www.eeefut.com;" in text
+    assert "ssl_certificate" in text
+    assert "return 301 https://eeefut.com" in text
 
 
 def test_install_nginx_script_starts_inactive_unit():
@@ -246,5 +261,36 @@ def test_install_nginx_script_starts_inactive_unit():
     script = Path(__file__).resolve().parents[1] / "scripts" / "install-nginx-80.sh"
     text = script.read_text()
     assert "systemctl start nginx" in text
-    assert "nginx.conf" in text
-    assert "eeefut: default :80 server disabled" in text
+    assert "disable_nginx_default_80.py" in text
+
+
+def test_disable_amazon_linux_padded_listen_80(tmp_path):
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(root / "scripts"))
+    from disable_nginx_default_80 import disable_default_80
+
+    # Stock Amazon Linux / RHEL nginx.conf uses many spaces before the port.
+    al_conf = """
+http {
+    include /etc/nginx/conf.d/*.conf;
+
+    server {
+        listen       80;
+        listen       [::]:80;
+        server_name  _;
+        root         /usr/share/nginx/html;
+    }
+}
+"""
+    patched, n = disable_default_80(al_conf)
+    assert n == 1
+    assert "eeefut: default :80 server disabled" in patched
+    assert "#         listen       80;" in patched
+    live = "\n".join(line for line in patched.splitlines() if not line.lstrip().startswith("#"))
+    assert "listen" not in live
+
+    again, n2 = disable_default_80(patched)
+    assert n2 == 0

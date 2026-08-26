@@ -50,7 +50,16 @@ def make_handler(state: DashboardState):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
+            if getattr(self, "_omit_body", False):
+                return
             self.wfile.write(body)
+
+        def do_HEAD(self) -> None:  # noqa: N802
+            self._omit_body = True
+            try:
+                self.do_GET()
+            finally:
+                self._omit_body = False
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)

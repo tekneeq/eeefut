@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Install nginx :80 → this instance's eeefut dashboard on :8082.
+# Install nginx :80 (and :443 when a Let's Encrypt cert exists) → :8082.
 # eeefut / eeesoc / julia each run on their own EC2 box.
 #
 # Amazon Linux ships a ``server { listen 80; server_name _; }`` in
@@ -13,9 +13,17 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$ROOT/scripts/nginx-eeefut-dashboard.conf"
+HTTP_SRC="$ROOT/scripts/nginx-eeefut-dashboard.conf"
+TLS_SRC="$ROOT/scripts/nginx-eeefut-https.conf"
 DEST="/etc/nginx/conf.d/eeefut-dashboard.conf"
+CERT="${EEEFUT_TLS_CERT:-/etc/letsencrypt/live/eeefut.com/fullchain.pem}"
 MARKER="eeefut: default :80 server disabled"
+
+if [ -f "$CERT" ]; then
+    SRC="$TLS_SRC"
+else
+    SRC="$HTTP_SRC"
+fi
 
 if [ ! -f "$SRC" ]; then
     echo "ERROR: missing $SRC" >&2
@@ -61,62 +69,18 @@ if [ -f /etc/nginx/nginx.conf ] && grep -qE 'listen[[:space:]]+(\[::\]:)?80([[:s
             cp -a /etc/nginx/nginx.conf "$bak"
             log "backed up /etc/nginx/nginx.conf → $bak"
         fi
-        python3 - "$MARKER" <<'PY'
-import sys
-from pathlib import Path
-
-marker = sys.argv[1]
-path = Path("/etc/nginx/nginx.conf")
-text = path.read_text()
-if marker in text:
-    raise SystemExit(0)
-
-lines = text.splitlines(keepends=True)
-out: list[str] = []
-i = 0
-disabled = 0
-while i < len(lines):
-    raw = lines[i]
-    stripped = raw.lstrip()
-    if stripped.startswith("server") and "{" in stripped:
-        block = [raw]
-        depth = raw.count("{") - raw.count("}")
-        i += 1
-        while i < len(lines) and depth > 0:
-            block.append(lines[i])
-            depth += lines[i].count("{") - lines[i].count("}")
-            i += 1
-        body = "".join(block)
-        listens_80 = (
-            "listen 80" in body
-            or "listen\t80" in body
-            or "listen [::]:80" in body
-        )
-        if listens_80 and "eeefut_dashboard" not in body:
-            out.append(f"# {marker}\n")
-            for line in block:
-                if line.endswith("\n"):
-                    out.append("# " + line)
-                else:
-                    out.append("# " + line + "\n")
-            disabled += 1
-            continue
-        out.extend(block)
-        continue
-    out.append(raw)
-    i += 1
-
-if disabled == 0:
-    print("WARNING: nginx.conf listens on :80 but no server block was commented", file=sys.stderr)
-else:
-    path.write_text("".join(out))
-    print(f"commented {disabled} default :80 server block(s) in nginx.conf")
-PY
+        if ! python3 "$ROOT/scripts/disable_nginx_default_80.py" /etc/nginx/nginx.conf; then
+            log "WARNING: could not comment the stock :80 server in nginx.conf"
+            grep -nE 'listen[[:space:]]+(\[::\]:)?80' /etc/nginx/nginx.conf || true
+        fi
     fi
 fi
 
+mkdir -p /var/www/certbot/.well-known/acme-challenge
+chmod -R a+rX /var/www/certbot || true
+
 install -m 0644 "$SRC" "$DEST"
-log "installed $DEST"
+log "installed $DEST (from $(basename "$SRC"))"
 
 nginx -t
 

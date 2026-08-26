@@ -53,14 +53,22 @@ chmod +x deploy.sh restart.sh scripts/docker-entrypoint.sh
 ./deploy.sh
 ```
 
-Nginx on this box is julia-style: **:80 → 127.0.0.1:8082**.
+Nginx on this box: **:80 / :443 → 127.0.0.1:8082** with `server_name eeefut.com www.eeefut.com`.
 
 ```bash
 cd ~/eeefut
-./scripts/install-nginx-80.sh
+./scripts/install-nginx-80.sh          # HTTP + ACME webroot
+./scripts/enable-https.sh              # Let's Encrypt, then HTTPS
+# CERTBOT_EMAIL=you@example.com ./scripts/enable-https.sh --www
 ```
 
-The installer comments Amazon Linux’s stock `server { listen 80; }` out of `/etc/nginx/nginx.conf` and starts nginx if the unit is inactive. Open the security group inbound for **80**.
+Browsers type `eeefut.com` as **https://** first. Until `:443` has a cert, the domain looks “down” while `http://<public-ip>/` still works.
+
+Checklist if the domain fails in a browser:
+
+1. Route53 **A** for `eeefut.com` = this instance’s **public** IPv4 (`curl -4 https://checkip.amazonaws.com` on the box). `www` needs an A or CNAME too.
+2. Security group inbound **80** and **443**.
+3. Run `enable-https.sh` so nginx listens on 443.
 
 ### Auto-deploy on push
 
