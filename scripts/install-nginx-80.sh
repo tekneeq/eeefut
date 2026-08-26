@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Install nginx :80 → this instance's eeefut dashboard on :8082.
+# Install nginx :80 (and :443 when a Let's Encrypt cert exists) → :8082.
 # eeefut / eeesoc / julia each run on their own EC2 box.
 #
 # Amazon Linux ships a ``server { listen 80; server_name _; }`` in
@@ -13,9 +13,17 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$ROOT/scripts/nginx-eeefut-dashboard.conf"
+HTTP_SRC="$ROOT/scripts/nginx-eeefut-dashboard.conf"
+TLS_SRC="$ROOT/scripts/nginx-eeefut-https.conf"
 DEST="/etc/nginx/conf.d/eeefut-dashboard.conf"
+CERT="${EEEFUT_TLS_CERT:-/etc/letsencrypt/live/eeefut.com/fullchain.pem}"
 MARKER="eeefut: default :80 server disabled"
+
+if [ -f "$CERT" ]; then
+    SRC="$TLS_SRC"
+else
+    SRC="$HTTP_SRC"
+fi
 
 if [ ! -f "$SRC" ]; then
     echo "ERROR: missing $SRC" >&2
@@ -68,8 +76,11 @@ if [ -f /etc/nginx/nginx.conf ] && grep -qE 'listen[[:space:]]+(\[::\]:)?80([[:s
     fi
 fi
 
+mkdir -p /var/www/certbot/.well-known/acme-challenge
+chmod -R a+rX /var/www/certbot || true
+
 install -m 0644 "$SRC" "$DEST"
-log "installed $DEST"
+log "installed $DEST (from $(basename "$SRC"))"
 
 nginx -t
 

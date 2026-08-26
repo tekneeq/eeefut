@@ -213,6 +213,9 @@ def test_dashboard_preset_similar_api(tmp_path, monkeypatch):
         assert "Chiefs 28" in html
         health = urllib.request.urlopen(base + "/health", timeout=5).read()
         assert health == b"ok\n"
+        head_req = urllib.request.Request(base + "/health", method="HEAD")
+        with urllib.request.urlopen(head_req, timeout=5) as resp:
+            assert resp.status == 200
     finally:
         httpd.shutdown()
         httpd.server_close()
@@ -233,11 +236,23 @@ def test_nginx_routes_port_80_to_dashboard_ports():
     text = conf.read_text()
     assert "listen 80 default_server" in text
     assert "server 127.0.0.1:8082" in text
+    assert "server_name eeefut.com www.eeefut.com _;" in text
+    assert "acme-challenge" in text
     assert "proxy_pass http://eeefut_dashboard" in text
     assert "8081" not in text
-    assert "8501" not in text
     assert "/eeesoc/" not in text
     assert "/julia/" not in text
+
+
+def test_nginx_https_server_name_and_443():
+    from pathlib import Path
+
+    conf = Path(__file__).resolve().parents[1] / "scripts" / "nginx-eeefut-https.conf"
+    text = conf.read_text()
+    assert "listen 443 ssl" in text
+    assert "server_name eeefut.com www.eeefut.com;" in text
+    assert "ssl_certificate" in text
+    assert "return 301 https://eeefut.com" in text
 
 
 def test_install_nginx_script_starts_inactive_unit():
