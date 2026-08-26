@@ -211,6 +211,16 @@ def test_dashboard_preset_similar_api(tmp_path, monkeypatch):
         html = urllib.request.urlopen(base + "/", timeout=5).read().decode()
         assert "eeefut" in html
         assert "Chiefs 28" in html
+        health = urllib.request.urlopen(base + "/health", timeout=5).read()
+        assert health == b"ok\n"
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_cli_host_flag_defaults():
+    from eeefut.cli import build_parser
+
+    ns = build_parser().parse_args(["--dashboard", "--host", "0.0.0.0", "--port", "8082"])
+    assert ns.host == "0.0.0.0"
+    assert ns.port == 8082
