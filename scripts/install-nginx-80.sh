@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 #
-# Install the port-80 front door that routes to dashboard containers:
-#   / → :8082 (eeefut), /eeesoc/ → :8081, /julia/ → :8501
+# Install nginx :80 → this instance's eeefut dashboard on :8082.
+# eeefut / eeesoc / julia each run on their own EC2 box.
 #
 # Amazon Linux ships a ``server { listen 80; server_name _; }`` in
-# /etc/nginx/nginx.conf (plus optional julia/eeesoc snippets). This
-# script disables those :80 listeners, installs ours, and starts nginx
-# if the unit is inactive.
+# /etc/nginx/nginx.conf. This script comments that out, installs ours,
+# and starts nginx if the unit is inactive.
 #
 # Usage (on the EC2 host, from the eeefut repo root):
 #   ./scripts/install-nginx-80.sh
@@ -150,8 +149,7 @@ if command -v systemctl >/dev/null 2>&1; then
     }
 fi
 
-log "http://<host>/ → eeefut :8082"
-log "also: /eeesoc/ → :8081   /julia/ → :8501   /health   /dashboards"
+log "http://<host>/ → eeefut :8082  (/health → container /health)"
 
 if curl -fsS http://127.0.0.1/health >/dev/null 2>&1; then
     log "health via :80: $(curl -fsS http://127.0.0.1/health | tr -d '\n')"

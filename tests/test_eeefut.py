@@ -233,11 +233,11 @@ def test_nginx_routes_port_80_to_dashboard_ports():
     text = conf.read_text()
     assert "listen 80 default_server" in text
     assert "server 127.0.0.1:8082" in text
-    assert "server 127.0.0.1:8081" in text
-    assert "server 127.0.0.1:8501" in text
-    assert "location /eeesoc/" in text
-    assert "location /julia/" in text
     assert "proxy_pass http://eeefut_dashboard" in text
+    assert "8081" not in text
+    assert "8501" not in text
+    assert "/eeesoc/" not in text
+    assert "/julia/" not in text
 
 
 def test_install_nginx_script_starts_inactive_unit():
