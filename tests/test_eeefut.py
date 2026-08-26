@@ -246,5 +246,36 @@ def test_install_nginx_script_starts_inactive_unit():
     script = Path(__file__).resolve().parents[1] / "scripts" / "install-nginx-80.sh"
     text = script.read_text()
     assert "systemctl start nginx" in text
-    assert "nginx.conf" in text
-    assert "eeefut: default :80 server disabled" in text
+    assert "disable_nginx_default_80.py" in text
+
+
+def test_disable_amazon_linux_padded_listen_80(tmp_path):
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(root / "scripts"))
+    from disable_nginx_default_80 import disable_default_80
+
+    # Stock Amazon Linux / RHEL nginx.conf uses many spaces before the port.
+    al_conf = """
+http {
+    include /etc/nginx/conf.d/*.conf;
+
+    server {
+        listen       80;
+        listen       [::]:80;
+        server_name  _;
+        root         /usr/share/nginx/html;
+    }
+}
+"""
+    patched, n = disable_default_80(al_conf)
+    assert n == 1
+    assert "eeefut: default :80 server disabled" in patched
+    assert "#         listen       80;" in patched
+    live = "\n".join(line for line in patched.splitlines() if not line.lstrip().startswith("#"))
+    assert "listen" not in live
+
+    again, n2 = disable_default_80(patched)
+    assert n2 == 0
