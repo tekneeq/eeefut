@@ -21,6 +21,9 @@
       </div>
       <nav class="tabs" role="tablist">
         <button class="tab active" data-tab="matches" role="tab" aria-selected="true">Matches</button>
+        <button class="tab" data-tab="live" role="tab" aria-selected="false">
+          Live <span class="tab-badge" id="liveBadge" hidden></span>
+        </button>
         <button class="tab" data-tab="similar" role="tab" aria-selected="false">Similar</button>
       </nav>
       <button type="button" class="preset" id="chiefsPreset" title="Load Chiefs 28' snapshot">
@@ -45,6 +48,28 @@
           </label>
         </div>
         <div id="matchList" class="match-list"></div>
+      </section>
+
+      <section id="panel-live" class="panel" role="tabpanel" hidden>
+        <div class="panel-head">
+          <h1>Live</h1>
+          <p class="lede">
+            Today's slate as chiclets — score, drive, last play, box stats. Freeze any live game into Similar.
+          </p>
+        </div>
+        <div class="toolbar live-toolbar">
+          <div class="chip-group" id="liveFilter" role="group" aria-label="Filter games">
+            <button type="button" class="chip active" data-state="all">All</button>
+            <button type="button" class="chip" data-state="in">Live</button>
+            <button type="button" class="chip" data-state="post">Final</button>
+            <button type="button" class="chip" data-state="pre">Upcoming</button>
+          </div>
+          <div class="live-status">
+            <span id="liveMeta" class="live-meta">Loading scoreboard…</span>
+            <button type="button" class="refresh" id="liveRefresh" title="Refresh now">Refresh</button>
+          </div>
+        </div>
+        <div id="liveGrid" class="chiclet-grid" aria-live="polite"></div>
       </section>
 
       <section id="panel-similar" class="panel" role="tabpanel" hidden>
