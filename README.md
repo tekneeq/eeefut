@@ -13,6 +13,8 @@ uv run eeefut --dashboard --port 8081 --warm NFL:2025
 
 Open http://127.0.0.1:8081 — use **Chiefs 28′** for the demo preset (`14'/28' · 245/14 vs 168/9`).
 
+The **Live** tab (`/#live`) shows today's slate as chiclets: score, drive on a football field, last play, box stats, leaders, and a **Similar N′** button that freezes the live snapshot into lookalikes. Data comes from ESPN's public scoreboard (`/api/live`, 20s cache; the box needs outbound HTTPS to `site.api.espn.com`).
+
 ## CLI
 
 ```bash
