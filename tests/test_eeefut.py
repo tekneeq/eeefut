@@ -221,6 +221,328 @@ def test_dashboard_preset_similar_api(tmp_path, monkeypatch):
         httpd.server_close()
 
 
+LIVE_SCOREBOARD = {
+    "season": {"type": 2, "year": 2026},
+    "week": {"number": 1},
+    "events": [
+        {
+            "id": "401",
+            "name": "Miami Dolphins at Las Vegas Raiders",
+            "shortName": "MIA @ LV",
+            "date": "2026-09-13T20:25Z",
+            "competitions": [
+                {
+                    "id": "401",
+                    "venue": {"fullName": "Allegiant Stadium"},
+                    "broadcasts": [{"market": "national", "names": ["FOX"]}],
+                    "status": {
+                        "clock": 120.0,
+                        "displayClock": "2:00",
+                        "period": 2,
+                        "type": {"state": "in", "name": "STATUS_IN_PROGRESS", "completed": False, "shortDetail": "2:00 - 2nd"},
+                    },
+                    "competitors": [
+                        {
+                            "homeAway": "home",
+                            "score": "14",
+                            "team": {"id": "13", "abbreviation": "LV", "shortDisplayName": "Raiders", "displayName": "Las Vegas Raiders", "color": "000000", "logo": "https://x/lv.png"},
+                            "records": [{"type": "total", "summary": "1-0"}],
+                            "linescores": [{"value": 7.0}, {"value": 7.0}],
+                        },
+                        {
+                            "homeAway": "away",
+                            "score": "3",
+                            "team": {"id": "15", "abbreviation": "MIA", "shortDisplayName": "Dolphins", "displayName": "Miami Dolphins", "color": "008e97", "logo": "https://x/mia.png"},
+                            "records": [{"type": "total", "summary": "0-1"}],
+                            "linescores": [{"value": 0.0}, {"value": 3.0}],
+                        },
+                    ],
+                    "situation": {
+                        "down": 3,
+                        "distance": 10,
+                        "yardLine": 31,
+                        "possession": "13",
+                        "downDistanceText": "3rd & 10 at LV 31",
+                        "shortDownDistanceText": "3rd & 10",
+                        "possessionText": "LV 31",
+                        "isRedZone": False,
+                        "homeTimeouts": 3,
+                        "awayTimeouts": 2,
+                        "lastPlay": {
+                            "type": {"text": "Pass Incompletion"},
+                            "text": "(Shotgun) K.Cousins pass incomplete deep right to J.Nailor.",
+                            "team": {"id": "13"},
+                            "scoreValue": 0,
+                            "statYardage": 0,
+                            "start": {"yardLine": 31},
+                            "end": {"yardLine": 31},
+                            "drive": {"description": "2 plays, 0 yards, 0:07"},
+                            "probability": {"homeWinPercentage": 0.9, "awayWinPercentage": 0.1},
+                        },
+                    },
+                    "leaders": [
+                        {
+                            "name": "passingYards",
+                            "leaders": [
+                                {"displayValue": "11/17, 157 YDS", "team": {"id": "15"}, "athlete": {"shortName": "M. Willis", "position": {"abbreviation": "QB"}}}
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+        {
+            "id": "402",
+            "shortName": "TB @ CIN",
+            "date": "2026-09-13T17:00Z",
+            "competitions": [
+                {
+                    "status": {"clock": 0.0, "displayClock": "0:00", "period": 4, "type": {"state": "post", "completed": True, "shortDetail": "Final"}},
+                    "competitors": [
+                        {"homeAway": "home", "score": "33", "winner": True, "team": {"id": "4", "abbreviation": "CIN"}},
+                        {"homeAway": "away", "score": "27", "winner": False, "team": {"id": "27", "abbreviation": "TB"}},
+                    ],
+                }
+            ],
+        },
+        {
+            "id": "403",
+            "shortName": "DAL @ NYG",
+            "date": "2026-09-14T00:20Z",
+            "competitions": [
+                {
+                    "status": {"clock": 0.0, "displayClock": "0:00", "period": 0, "type": {"state": "pre", "completed": False, "shortDetail": "9/13 - 8:20 PM EDT"}},
+                    "competitors": [
+                        {"homeAway": "home", "score": "0", "team": {"id": "19", "abbreviation": "NYG"}},
+                        {"homeAway": "away", "score": "0", "team": {"id": "6", "abbreviation": "DAL"}},
+                    ],
+                }
+            ],
+        },
+    ],
+}
+
+LIVE_SUMMARY_401 = {
+    "boxscore": {
+        "teams": [
+            {
+                "team": {"id": "15", "abbreviation": "MIA"},
+                "homeAway": "away",
+                "statistics": [
+                    {"name": "firstDowns", "displayValue": "9"},
+                    {"name": "totalYards", "displayValue": "168"},
+                    {"name": "netPassingYards", "displayValue": "120"},
+                    {"name": "rushingYards", "displayValue": "48"},
+                    {"name": "turnovers", "displayValue": "1"},
+                    {"name": "possessionTime", "displayValue": "12:10"},
+                ],
+            },
+            {
+                "team": {"id": "13", "abbreviation": "LV"},
+                "homeAway": "home",
+                "statistics": [
+                    {"name": "firstDowns", "displayValue": "14"},
+                    {"name": "totalYards", "displayValue": "245"},
+                    {"name": "netPassingYards", "displayValue": "150"},
+                    {"name": "rushingYards", "displayValue": "95"},
+                    {"name": "turnovers", "displayValue": "0"},
+                    {"name": "possessionTime", "displayValue": "17:50"},
+                ],
+            },
+        ]
+    },
+    "scoringPlays": [
+        {"period": {"number": 1}, "clock": {"value": 60.0}, "team": {"id": "13"}},
+        {"period": {"number": 2}, "clock": {"value": 120.0}, "team": {"id": "13"}},
+        {"period": {"number": 2}, "clock": {"value": 400.0}, "team": {"id": "15"}},
+    ],
+    "leaders": [
+        {
+            "team": {"id": "13"},
+            "leaders": [
+                {"name": "rushingYards", "leaders": [{"displayValue": "17 CAR, 102 YDS", "athlete": {"shortName": "A. Jeanty", "position": {"abbreviation": "RB"}}}]},
+                {"name": "sacks", "leaders": [{"displayValue": "1", "athlete": {"shortName": "N. Dean"}}]},
+            ],
+        }
+    ],
+}
+
+
+def _fake_live_fetch(calls: list[str]):
+    def fetch(url: str) -> dict:
+        calls.append(url)
+        if url.endswith("/scoreboard"):
+            return LIVE_SCOREBOARD
+        if "event=401" in url:
+            return LIVE_SUMMARY_401
+        if "event=402" in url:
+            return {"boxscore": {"teams": []}, "scoringPlays": []}
+        raise RuntimeError(f"unexpected {url}")
+
+    return fetch
+
+
+def test_live_elapsed_minute_mapping():
+    from eeefut.live import elapsed_minute
+
+    assert elapsed_minute(1, 900) == 1
+    assert elapsed_minute(2, 120) == 28  # Q2 2:00
+    assert elapsed_minute(2, 0) == 30  # halftime
+    assert elapsed_minute(4, 899) == 46
+    assert elapsed_minute(4, 0) == 60
+    assert elapsed_minute(5, 300) == 60  # OT clamps
+
+
+def test_live_normalize_scoreboard_orders_live_first():
+    from eeefut.live import normalize_scoreboard
+
+    board = normalize_scoreboard(LIVE_SCOREBOARD)
+    assert board["season"] == 2026
+    assert board["week"] == 1
+    assert [g["state"] for g in board["games"]] == ["in", "pre", "post"]
+
+    live = board["games"][0]
+    assert live["short_name"] == "MIA @ LV"
+    assert live["period_label"] == "Q2 2:00"
+    assert live["minute"] == 28
+    assert live["broadcast"] == "FOX"
+    assert live["home"]["abbr"] == "LV"
+    assert live["home"]["record"] == "1-0"
+    assert live["home"]["linescores"] == [7, 7]
+    assert live["away"]["leaders"]["passing"]["name"] == "M. Willis"
+    assert "passing" not in live["home"]["leaders"]
+
+    sit = live["situation"]
+    assert sit["possession"] == "home"
+    assert sit["yard_line"] == 31
+    assert sit["down"] == 3 and sit["distance"] == 10
+    assert sit["away_timeouts"] == 2
+    assert sit["win_prob"] == {"home": 0.9, "away": 0.1}
+    assert sit["last_play"]["type"] == "Pass Incompletion"
+    assert sit["last_play"]["team"] == "home"
+    assert "K.Cousins" in sit["last_play"]["text"]
+
+    final = board["games"][2]
+    assert final["period_label"] == "Final"
+    assert final["home"]["winner"] and not final["away"]["winner"]
+    assert final["situation"] is None
+    assert final["minute"] == 60
+
+    upcoming = board["games"][1]
+    assert upcoming["minute"] is None
+    assert upcoming["period_label"] == "9/13 - 8:20 PM EDT"
+
+
+def test_live_apply_summary_and_snapshot():
+    from eeefut.live import apply_summary, attach_snapshot, normalize_scoreboard
+
+    game = normalize_scoreboard(LIVE_SCOREBOARD)["games"][0]
+    apply_summary(game, LIVE_SUMMARY_401)
+    attach_snapshot(game)
+
+    assert game["home"]["stats"]["total_yards"] == "245"
+    assert game["home"]["stats"]["first_downs"] == "14"
+    assert game["away"]["stats"]["possession"] == "12:10"
+    assert game["scoring_minutes"] == [14, 24, 28]
+    assert game["home"]["leaders"]["rushing"]["name"] == "A. Jeanty"
+    assert "sacks" not in game["home"]["leaders"]
+
+    snap = game["snapshot"]
+    assert snap["has_box"] is True
+    assert snap["minute"] == 28
+    assert snap["home_score"] == 14 and snap["away_score"] == 3
+    assert snap["label"] == "14'/24'/28' · 245/14 vs 168/9"
+    assert snap["clock"] == "Q2 2:00"
+
+
+def test_live_feed_caches_and_falls_back_to_stale(monkeypatch):
+    from eeefut import live as live_mod
+    from eeefut.live import LiveFeed
+
+    calls: list[str] = []
+    feed = LiveFeed(_fake_live_fetch(calls), ttl=100)
+    board = feed.get()
+    assert board["counts"] == {"live": 1, "final": 1, "upcoming": 1}
+    # scoreboard + summaries for the in-progress and final game only (no fetch for pre)
+    assert sum(u.endswith("/scoreboard") for u in calls) == 1
+    assert sum("event=" in u for u in calls) == 2
+
+    feed.get()
+    assert sum(u.endswith("/scoreboard") for u in calls) == 1  # served from cache
+
+    monkeypatch.setattr(live_mod, "FORCE_MIN_INTERVAL", 0.0)
+    feed.get(force=True)
+    assert sum(u.endswith("/scoreboard") for u in calls) == 2
+
+    def boom(url: str) -> dict:
+        raise RuntimeError("espn down")
+
+    feed._fetch = boom  # noqa: SLF001
+    feed._fetched_at = 0.0  # noqa: SLF001 - expire cache
+    stale = feed.get()
+    assert stale["stale"] is True
+    assert "espn down" in stale["error"]
+    assert stale["counts"]["live"] == 1
+
+    empty = LiveFeed(boom)
+    try:
+        empty.get()
+    except RuntimeError as exc:
+        assert "espn down" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("expected first-fetch failure to raise")
+
+
+def test_dashboard_live_api(tmp_path, monkeypatch):
+    import json
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    from eeefut.dashboard import DashboardState, make_handler
+    from eeefut.live import LiveFeed
+
+    monkeypatch.setenv("EEEFUT_CACHE", str(tmp_path))
+    save_season("NFL:2025", inject_chiefs_preset([], "NFL:2025"))
+
+    state = DashboardState("NFL:2025", live=LiveFeed(_fake_live_fetch([])))
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(state))
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        board = json.loads(urllib.request.urlopen(base + "/api/live", timeout=5).read())
+        assert board["week"] == 1
+        assert len(board["games"]) == 3
+        live = board["games"][0]
+        assert live["situation"]["last_play"]["type"] == "Pass Incompletion"
+        assert live["snapshot"]["label"] == "14'/24'/28' · 245/14 vs 168/9"
+        html = urllib.request.urlopen(base + "/", timeout=5).read().decode()
+        assert 'data-tab="live"' in html
+        assert 'id="liveGrid"' in html
+
+        def boom(url: str) -> dict:
+            raise RuntimeError("espn down")
+
+        broken = DashboardState("NFL:2025", live=LiveFeed(boom))
+        httpd2 = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(broken))
+        threading.Thread(target=httpd2.serve_forever, daemon=True).start()
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{httpd2.server_address[1]}/api/live", timeout=5)
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 502
+            assert "espn down" in json.loads(exc.read())["error"]
+        else:  # pragma: no cover
+            raise AssertionError("expected 502")
+        finally:
+            httpd2.shutdown()
+            httpd2.server_close()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_cli_host_flag_defaults():
     from eeefut.cli import build_parser
 

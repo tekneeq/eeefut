@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from eeefut.data import load_season, previous_season_label
+from eeefut.live import LiveFeed
 from eeefut.models import Game, GameSnapshot
 from eeefut.similar import find_similar
 
@@ -20,8 +21,9 @@ CHIEFS_PRESET_RE = re.compile(r"preset:Chiefs:28")
 
 
 class DashboardState:
-    def __init__(self, season: str) -> None:
+    def __init__(self, season: str, live: LiveFeed | None = None) -> None:
         self.season = season
+        self.live = live or LiveFeed()
         self.reload()
 
     def reload(self) -> None:
@@ -93,6 +95,14 @@ def make_handler(state: DashboardState):
 
             if path == "/health":
                 return self._send(200, b"ok\n", "text/plain; charset=utf-8")
+
+            if path == "/api/live":
+                force = (qs.get("force") or ["0"])[0] in ("1", "true")
+                try:
+                    board = state.live.get(force=force)
+                except Exception as exc:  # noqa: BLE001 - surface feed outages to the UI
+                    return self._send(502, _json_bytes({"error": str(exc), "games": []}), "application/json")
+                return self._send(200, _json_bytes(board), "application/json")
 
             if path == "/api/matches":
                 rows = [
