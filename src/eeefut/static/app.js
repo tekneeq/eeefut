@@ -250,12 +250,13 @@
     const total = (an ?? 0) + (hn ?? 0);
     const aw = total > 0 && an !== null ? Math.round((an / total) * 100) : 50;
     const hw = total > 0 && hn !== null ? 100 - aw : 50;
+    const pct = (n) => (n >= 14 ? `${n}%` : "");
     return `
       <div class="stat-row">
         <span class="sv away">${esc(a ?? "–")}</span>
-        <span class="sbar" aria-hidden="true">
-          <i class="a" style="width:${aw}%;background:${teamColor(game.away)}"></i>
-          <i class="h" style="width:${hw}%;background:${teamColor(game.home)}"></i>
+        <span class="sbar" role="img" aria-label="${esc(label)} ${aw}% away, ${hw}% home">
+          <span class="seg a" style="width:${aw}%;background:${teamColor(game.away)}">${pct(aw)}</span>
+          <span class="seg h" style="width:${hw}%;background:${teamColor(game.home)}">${pct(hw)}</span>
         </span>
         <span class="sv home">${esc(h ?? "–")}</span>
         <span class="sl">${esc(label)}</span>
@@ -332,10 +333,15 @@
   function winProb(game) {
     const wp = game.situation?.win_prob;
     if (!wp) return "";
-    const homeFav = wp.home >= wp.away;
-    const team = homeFav ? game.home : game.away;
-    const pct = Math.round((homeFav ? wp.home : wp.away) * 100);
-    return `<span class="wp" title="Win probability">${esc(team.abbr)} ${pct}%</span>`;
+    const away = Math.max(0, Math.min(100, Math.round(wp.away * 100)));
+    const home = 100 - away;
+    const label = (side, pct) =>
+      pct >= 18 ? `<b>${esc(game[side].abbr)}</b> ${pct}%` : pct >= 10 ? `${pct}%` : "";
+    return `
+      <div class="wp-bar" title="Win probability ${esc(game.away.abbr)} ${away}% · ${esc(game.home.abbr)} ${home}%">
+        <span class="seg a" style="width:${away}%;background:${teamColor(game.away)}">${label("away", away)}</span>
+        <span class="seg h" style="width:${home}%;background:${teamColor(game.home)}">${label("home", home)}</span>
+      </div>`;
   }
 
   function chicletHtml(game) {
@@ -370,12 +376,12 @@
         <header class="chiclet-head">
           ${statusBadge(game)}
           <span class="net">${esc([game.broadcast, game.state === "pre" ? game.venue : ""].filter(Boolean).join(" · "))}</span>
-          ${winProb(game)}
         </header>
         <div class="team-rows">
           ${teamRow(game, "away")}
           ${teamRow(game, "home")}
         </div>
+        ${winProb(game)}
         ${
           s
             ? `<div class="drive">
