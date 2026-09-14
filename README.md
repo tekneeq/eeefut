@@ -17,6 +17,8 @@ The **Live** tab (`/#live`) shows today's slate as chiclets: score, drive on a f
 
 The **Teams** tab (`/#teams`, `/#teams/KC`) aggregates every stored game into offense / defense metrics with league ranks (yards for and allowed, rush/pass splits, points per drive, 3-and-outs, turnovers…), tendencies (run/pass mix, deep vs short shots, rush/pass direction), top players by category, and a game log that drills into every drive and play. Games are stored under `<cache>/games/<season>/<event_id>.json` with drives → plays (tagged pass/rush, depth, direction, sack, turnover, explosive, participants when ESPN provides them) and each player's box lines; `_rosters.json` holds positions. Finals are persisted automatically by the Live poller; use **Sync games** (or `--ingest`) to backfill a season.
 
+The **WinProb** tab (`/#winprob`) runs a margin-of-victory Elo (K=20, ~1.9 pt home field, ⅓ regression between seasons) over the full nflverse schedule history and shows, for every game of the current season, each team's pre-game win probability, the model's expected margin ("KC by 4.5"), and the market line for comparison. Below the games: the season and weekly pick record (with Brier score and how Vegas favourites did), a calibration panel of favourites' actual record per probability bucket (50–55, 55–60, 60–65, 65–70, >70 — combined, with the home/away split underneath), per-team records when favoured, and the Elo power ratings. Probabilities are computed as of kickoff (ratings replayed chronologically), and scores the schedule file hasn't posted yet are filled from the game store.
+
 ## CLI
 
 ```bash

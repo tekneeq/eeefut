@@ -26,8 +26,10 @@
     loading: false,
   };
 
+  state.wp = { board: null, week: null, loading: false, error: null };
+
   const LIVE_REFRESH_MS = 20000;
-  const VALID_TABS = new Set(["matches", "live", "teams", "similar"]);
+  const VALID_TABS = new Set(["matches", "live", "teams", "winprob", "similar"]);
 
   const $ = (sel) => document.querySelector(sel);
 
@@ -61,6 +63,7 @@
       loadTeams();
       if (!location.hash.startsWith("#teams")) history.replaceState(null, "", "#teams");
     }
+    if (name === "winprob") loadWinProb();
   }
 
   // ---------------------------------------------------------------- Matches
@@ -945,6 +948,245 @@
     }
   }
 
+  // ---------------------------------------------------------------- WinProb
+
+  const TEAM_COLORS = {
+    ARI: "97233f", ATL: "a71930", BAL: "241773", BUF: "00338d", CAR: "0085ca", CHI: "0b162a", CIN: "fb4f14",
+    CLE: "311d00", DAL: "003594", DEN: "fb4f14", DET: "0076b6", GB: "203731", HOU: "03202f", IND: "002c5f",
+    JAX: "006778", KC: "e31837", LA: "003594", LAC: "0080c6", LV: "a5acaf", MIA: "008e97", MIN: "4f2683",
+    NE: "002244", NO: "d3bc8d", NYG: "0b2265", NYJ: "125740", PHI: "004c54", PIT: "ffb612", SEA: "69be28",
+    SF: "aa0000", TB: "d50a0a", TEN: "4b92db", WAS: "5a1414",
+  };
+  const teamHex = (abbr) => `#${TEAM_COLORS[abbr] || "555555"}`;
+
+  async function loadWinProb(force = false) {
+    if (state.wp.loading) return;
+    state.wp.loading = true;
+    $("#wpRefresh").disabled = true;
+    try {
+      const res = await fetch(`/api/winprob${force ? "?force=1" : ""}`);
+      const board = await res.json();
+      if (!res.ok) throw new Error(board.error || `HTTP ${res.status}`);
+      state.wp.board = board;
+      state.wp.error = null;
+      if (state.wp.week === null || !board.weeks.includes(state.wp.week)) state.wp.week = board.current_week;
+    } catch (err) {
+      state.wp.error = err.message || String(err);
+    } finally {
+      state.wp.loading = false;
+      $("#wpRefresh").disabled = false;
+    }
+    renderWinProb();
+  }
+
+  function pct(x, digits = 0) {
+    return x === null || x === undefined ? "–" : `${Number(x).toFixed(digits)}%`;
+  }
+
+  function marginText(team, margin) {
+    if (!margin) return "Pick 'em";
+    return `${team} by ${margin}`;
+  }
+
+  function spreadText(market, home, away) {
+    if (!market || market.spread === null || market.spread === undefined) return "";
+    if (market.spread === 0) return "PK";
+    const fav = market.spread > 0 ? home : away;
+    return `${fav} -${Math.abs(market.spread)}`;
+  }
+
+  function wpGameCard(g) {
+    const r = g.result;
+    const homeFav = g.favorite === g.home;
+    const cls = r ? (r.correct === null ? "tie" : r.correct ? "hit" : "miss") : "pending";
+    const kickoff = g.played
+      ? "Final"
+      : `${g.weekday ? g.weekday.slice(0, 3) : ""} ${g.date.slice(5)} · ${g.time} ET`.trim();
+    const line = spreadText(g.market, g.home, g.away);
+    const mkt = g.market?.home_prob !== null && g.market?.home_prob !== undefined
+      ? `Vegas ${line} · ${pct(Math.max(g.market.home_prob, g.market.away_prob) * 100)}`
+      : line
+        ? `Vegas ${line}`
+        : "";
+    const row = (side) => {
+      const abbr = g[side];
+      const isFav = g.favorite === abbr;
+      const won = r && r.winner === abbr;
+      const lost = r && r.winner && r.winner !== abbr;
+      return `
+        <div class="team-row ${side} ${isFav ? "fav" : ""} ${won ? "winner" : ""} ${lost ? "loser" : ""}" style="--team:${teamHex(abbr)}">
+          <img class="logo" src="${esc(g[`${side}_logo`])}" alt="" loading="lazy" onerror="this.style.visibility='hidden'" />
+          <span class="tname"><b>${esc(abbr)}</b><span class="full">${esc(g[`${side}_name`])}</span>
+            <small class="rec">Elo ${g[`${side}_elo`]}</small></span>
+          <span class="wp-pct ${isFav ? "fav" : ""}">${pct(g[`${side}_prob`] * 100, 1)}</span>
+          <span class="tscore">${g.played ? g[`${side}_score`] : ""}</span>
+        </div>`;
+    };
+    const ap = Math.round(g.away_prob * 100);
+    const hp = 100 - ap;
+    return `
+      <article class="chiclet wp-card ${cls}" data-id="${esc(g.id)}">
+        <header class="chiclet-head">
+          <span class="status ${g.played ? "final" : "pre"}">${esc(kickoff)}</span>
+          <span class="net">${g.neutral ? "Neutral site" : ""}</span>
+          ${
+            r
+              ? `<span class="verdict ${cls}">${r.correct === null ? "TIE" : r.correct ? "✓ HIT" : "✗ MISS"}</span>`
+              : `<span class="bucket-tag" title="Favourite's probability bucket">${esc(g.bucket)}%</span>`
+          }
+        </header>
+        <div class="team-rows">${row("away")}${row("home")}</div>
+        <div class="wp-bar" title="${esc(g.away)} ${ap}% · ${esc(g.home)} ${hp}%">
+          <span class="seg a" style="width:${ap}%;background:${teamHex(g.away)}">${ap >= 18 ? `<b>${esc(g.away)}</b> ${ap}%` : ap >= 10 ? `${ap}%` : ""}</span>
+          <span class="seg h" style="width:${hp}%;background:${teamHex(g.home)}">${hp >= 18 ? `<b>${esc(g.home)}</b> ${hp}%` : hp >= 10 ? `${hp}%` : ""}</span>
+        </div>
+        <div class="wp-lines">
+          <span class="wp-margin"><small>Model</small> ${esc(marginText(g.favorite, g.favorite_margin))}</span>
+          ${mkt ? `<span class="wp-market"><small>Market</small> ${esc(mkt)}</span>` : ""}
+          ${
+            r
+              ? `<span class="wp-actual"><small>Actual</small> ${r.winner ? `${esc(r.winner)} by ${Math.abs(r.margin)}` : "Tie"} · off by ${r.margin_error}</span>`
+              : ""
+          }
+        </div>
+      </article>`;
+  }
+
+  function wpRecordHtml(board) {
+    const t = board.record.total;
+    const weekly = board.record.weekly.filter((w) => w.decided || w.week === board.current_week);
+    return `
+      <div class="card wp-season">
+        <h3>Season record</h3>
+        <div class="wp-big">
+          <span class="wp-big-rec">${esc(t.record)}</span>
+          <span class="wp-big-pct">${pct(t.pct, 1)}</span>
+        </div>
+        <div class="mini-kpis">
+          <span><b>${t.decided}</b> decided</span>
+          <span><b>${t.pending}</b> pending</span>
+          <span>Brier <b>${t.brier ?? "–"}</b></span>
+          <span>Margin off by <b>${t.avg_margin_error ?? "–"}</b> pts</span>
+          <span>Vegas <b>${t.market_decided ? `${t.market_correct}-${t.market_decided - t.market_correct}` : "–"}</b> (${pct(t.market_pct, 1)})</span>
+        </div>
+      </div>
+      <div class="card wp-weekly">
+        <h3>Weekly record</h3>
+        <div class="wp-week-strip">
+          ${weekly
+            .map(
+              (w) => `
+            <button type="button" class="wk ${w.week === state.wp.week ? "active" : ""} ${w.pct === null ? "pending" : w.pct >= 60 ? "good" : w.pct < 50 ? "bad" : ""}" data-week="${w.week}">
+              <small>W${w.week}</small>
+              <b>${w.decided ? esc(w.record) : `${w.pending} tbd`}</b>
+              <span>${w.decided ? pct(w.pct) : "–"}</span>
+              ${w.market_decided ? `<i title="Vegas favourites">V ${w.market_correct}-${w.market_decided - w.market_correct}</i>` : ""}
+            </button>`
+            )
+            .join("")}
+        </div>
+      </div>`;
+  }
+
+  function wpBucketsHtml(board) {
+    const rows = board.buckets
+      .map((b) => {
+        const actual = b.pct;
+        const expected = b.expected_pct;
+        const decided = b.wins + b.losses;
+        const diff = actual !== null && expected !== null ? actual - expected : null;
+        return `
+          <div class="bucket-row">
+            <span class="bk-label">${esc(b.label)}</span>
+            <div class="bk-bar" title="Actual ${pct(actual, 1)} vs expected ${pct(expected, 1)}">
+              <i class="exp" style="left:${expected ?? 0}%"></i>
+              <span class="act ${diff === null ? "" : diff >= 0 ? "good" : "bad"}" style="width:${actual ?? 0}%"></span>
+              <em class="tick" style="left:50%"></em>
+            </div>
+            <span class="bk-rec"><b>${esc(b.record)}</b>${decided ? ` · ${pct(actual, 1)}` : ""}</span>
+            <span class="bk-exp">${expected !== null ? `expected ${pct(expected, 1)}` : ""}${b.pending ? ` · ${b.pending} pending` : ""}</span>
+            <span class="bk-split">home ${esc(b.home.record)} · away ${esc(b.away.record)}</span>
+          </div>`;
+      })
+      .join("");
+    return `
+      <h3>Favourites by probability bucket <small>combined record · home / away split underneath</small></h3>
+      <div class="bucket-legend"><i class="exp"></i> expected win % &nbsp; <span class="sw good"></span> actual ≥ expected &nbsp; <span class="sw bad"></span> actual below</div>
+      ${rows}`;
+  }
+
+  function wpTeamBucketsHtml(board) {
+    const keys = board.buckets.map((b) => b.key);
+    return `
+      <div class="tb-grid" style="--cols:${keys.length}">
+        <span class="tb-h">Team</span><span class="tb-h">Favoured</span><span class="tb-h">Underdog</span>
+        ${keys.map((k) => `<span class="tb-h">${esc(k)}%</span>`).join("")}
+        ${board.team_buckets
+          .map(
+            (t) => `
+          <span class="tb-team"><img class="logo" src="${esc(t.logo)}" alt="" loading="lazy" /> ${esc(t.team)}</span>
+          <span class="tb-c">${esc(t.favored.record)}</span>
+          <span class="tb-c muted">${esc(t.underdog.record)}</span>
+          ${keys
+            .map((k) => {
+              const b = t.buckets[k];
+              const n = b.wins + b.losses + b.ties;
+              return `<span class="tb-c ${n ? (b.wins > b.losses ? "good" : b.wins < b.losses ? "bad" : "") : "empty"}">${n ? esc(b.record) : "·"}</span>`;
+            })
+            .join("")}`
+          )
+          .join("")}
+      </div>`;
+  }
+
+  function wpRatingsHtml(board) {
+    return `
+      <div class="rating-list">
+        ${board.ratings
+          .map(
+            (r) => `
+          <div class="rating-row">
+            <span class="rk">#${r.rank}</span>
+            <img class="logo" src="${esc(r.logo)}" alt="" loading="lazy" />
+            <span class="rn"><b>${esc(r.team)}</b> ${esc(r.name)}</span>
+            <span class="rr">${esc(r.record)}</span>
+            <span class="re">${r.elo}</span>
+          </div>`
+          )
+          .join("")}
+      </div>`;
+  }
+
+  function renderWinProb() {
+    const board = state.wp.board;
+    const meta = $("#wpMeta");
+    if (!board) {
+      $("#wpGames").innerHTML = `<p class="lede">${state.wp.error ? `Model unavailable — ${esc(state.wp.error)}` : "Loading…"}</p>`;
+      meta.textContent = state.wp.error ? "Offline" : "Loading…";
+      return;
+    }
+    const t = board.record.total;
+    meta.textContent = `${board.season} · ${board.model.name} · HFA ${board.model.hfa_points} pts · ${t.record} (${pct(t.pct, 1)}) · ${board.games.length} games`;
+    $("#wpRecord").innerHTML = wpRecordHtml(board);
+    $("#wpBuckets").innerHTML = wpBucketsHtml(board);
+    $("#wpWeeks").innerHTML = board.weeks
+      .map((w) => `<button type="button" class="chip ${w === state.wp.week ? "active" : ""}" data-week="${w}">W${w}</button>`)
+      .join("");
+    const games = board.games.filter((g) => g.week === state.wp.week);
+    const wk = board.record.weekly.find((w) => w.week === state.wp.week);
+    $("#wpWeekTitle").textContent = `Week ${state.wp.week}${wk && wk.decided ? ` · ${wk.record} (${pct(wk.pct)})` : ""}${wk && wk.pending ? ` · ${wk.pending} to play` : ""}`;
+    $("#wpGames").innerHTML = games.map(wpGameCard).join("") || `<p class="lede">No games this week.</p>`;
+    $("#wpTeamBuckets").innerHTML = wpTeamBucketsHtml(board);
+    $("#wpRatingList").innerHTML = wpRatingsHtml(board);
+  }
+
+  function onWinProbClick(ev) {
+    const btn = ev.target.closest("button[data-week]");
+    if (!btn) return;
+    state.wp.week = Number(btn.dataset.week);
+    renderWinProb();
+  }
+
   // ------------------------------------------------------------------- Boot
 
   async function boot() {
@@ -976,6 +1218,8 @@
       if (document.visibilityState === "visible" && currentTab() === "live") loadLive();
     });
     $("#panel-teams").addEventListener("click", onTeamsClick);
+    $("#panel-winprob").addEventListener("click", onWinProbClick);
+    $("#wpRefresh").addEventListener("click", () => loadWinProb(true));
     $("#teamsSync").addEventListener("click", syncTeams);
     $("#teamFilter").addEventListener("input", (ev) => {
       state.teams.filter = ev.target.value || "";

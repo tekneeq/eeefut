@@ -857,6 +857,152 @@ def test_live_feed_persists_summaries_to_store(tmp_path, monkeypatch):
     assert store.count(2026) == 1
 
 
+WP_CSV_HEADER = "game_id,season,game_type,week,gameday,weekday,gametime,away_team,away_score,home_team,home_score,location,espn,away_moneyline,home_moneyline,spread_line"
+
+
+def _wp_rows(*lines: str) -> list[dict[str, str]]:
+    import csv
+    import io
+
+    return list(csv.DictReader(io.StringIO("\n".join([WP_CSV_HEADER, *lines]) + "\n")))
+
+
+WP_ROWS = _wp_rows(
+    # 2025: A beats B twice, B beats C, so A > B > C entering 2026
+    "2025_01_B_A,2025,REG,1,2025-09-07,Sunday,13:00,B,10,A,31,Home,1,150,-180,4",
+    "2025_02_A_B,2025,REG,2,2025-09-14,Sunday,13:00,A,27,B,20,Home,2,-140,120,-2",
+    "2025_03_C_B,2025,REG,3,2025-09-21,Sunday,13:00,C,3,B,24,Home,3,200,-240,6",
+    "2025_04_A_C,2025,REG,4,2025-09-28,Sunday,13:00,A,35,C,7,Home,4,-300,240,-7",
+    # 2026: week 1 scored in csv (A wins), week 1 game 2 unscored (filled from store), week 2 future
+    "2026_01_B_A,2026,REG,1,2026-09-13,Sunday,13:00,B,17,A,24,Home,11,160,-190,3.5",
+    "2026_01_A_C,2026,REG,1,2026-09-13,Sunday,16:25,A,,C,,Home,12,-250,205,-5.5",
+    "2026_02_C_A,2026,REG,2,2026-09-20,Sunday,13:00,C,,A,,Home,13,300,-380,8",
+    "2026_02_B_C,2026,REG,2,2026-09-20,Sunday,13:00,B,,C,,Neutral,14,,,",
+)
+
+
+def test_winprob_helpers():
+    from eeefut.winprob import bucket_for, elo_win_prob, moneyline_prob, norm_team
+
+    assert elo_win_prob(0) == 0.5
+    assert round(elo_win_prob(400), 3) == 0.909
+    assert round(moneyline_prob(-150), 4) == 0.6
+    assert round(moneyline_prob(150), 4) == 0.4
+    assert moneyline_prob("") is None
+    assert bucket_for(0.52) == "50-55" and bucket_for(0.48) == "50-55"
+    assert bucket_for(0.55) == "55-60" and bucket_for(0.649) == "60-65"
+    assert bucket_for(0.66) == "65-70" and bucket_for(0.9) == ">70"
+    assert norm_team("oak") == "LV" and norm_team("STL") == "LA" and norm_team("KC") == "KC"
+
+
+def test_winprob_model_pregame_probabilities_and_results():
+    from eeefut.winprob import build_dashboard, run_model
+
+    model = run_model(WP_ROWS, 2026, extra_results={"12": (13, 30)})
+    games = {g["id"]: g for g in model["games"]}
+    assert set(games) == {"2026_01_B_A", "2026_01_A_C", "2026_02_C_A", "2026_02_B_C"}
+
+    g1 = games["2026_01_B_A"]
+    assert g1["home"] == "A" and g1["favorite"] == "A" and g1["home_prob"] > 0.5
+    assert g1["played"] and g1["result"]["correct"] is True and g1["result"]["winner"] == "A"
+    assert g1["result"]["margin"] == 7
+    assert g1["market"]["spread"] == 3.5 and g1["market"]["favorite"] == "A"
+    assert 0.6 < g1["market"]["home_prob"] < 0.7  # vig removed from -190 / +160
+    assert g1["result"]["market_correct"] is True
+
+    g2 = games["2026_01_A_C"]  # scored via the store, not the csv
+    assert g2["played"] and g2["home_score"] == 13 and g2["away_score"] == 30
+    assert g2["favorite"] == "A" and not g2["favorite_home"] and g2["result"]["correct"] is True
+    assert g2["expected_margin"] < 0  # home C expected to lose
+
+    g3 = games["2026_02_C_A"]
+    assert not g3["played"] and g3["result"] is None
+    # A's rating after two 2026 wins beats the pre-week-1 rating
+    assert g3["home_elo"] > g1["home_elo"]
+    g4 = games["2026_02_B_C"]
+    assert g4["neutral"] and g4["market"] is None
+
+    ratings = {r["team"]: r for r in model["ratings"]}
+    assert ratings == {} or set(ratings) <= {"A", "B", "C"}  # synthetic teams are not NFL abbrs
+
+    board = build_dashboard(model)
+    assert board["current_week"] == 2 and board["weeks"] == [1, 2]
+    total = board["record"]["total"]
+    assert total["record"] == "2-0" and total["pct"] == 100.0 and total["pending"] == 2
+    assert total["market_correct"] == 2 and total["market_decided"] == 2
+    weekly = {w["week"]: w for w in board["record"]["weekly"]}
+    assert weekly[1]["record"] == "2-0" and weekly[2]["pending"] == 2
+
+    buckets = {b["key"]: b for b in board["buckets"]}
+    assert sum(b["wins"] for b in buckets.values()) == 2
+    played_bucket = buckets[g1["bucket"]]
+    assert played_bucket["home"]["wins"] >= 1 or played_bucket["away"]["wins"] >= 1
+    assert all(b["expected_pct"] is None or b["lo"] * 100 <= b["expected_pct"] <= b["hi"] * 100 for b in buckets.values())
+
+    team_rows = {t["team"]: t for t in board["team_buckets"]}
+    assert team_rows["A"]["favored"]["record"] == "2-0"
+    assert team_rows["B"]["underdog"]["record"] == "0-1"
+    assert team_rows["C"]["underdog"]["record"] == "0-1"
+
+
+def test_winprob_service_caches_and_uses_store_results(tmp_path, monkeypatch):
+    from eeefut.winprob import WinProbService
+
+    monkeypatch.setenv("EEEFUT_CACHE", str(tmp_path))
+    results = {"12": (13, 30)}
+    calls = []
+
+    def provider(season: int) -> dict:
+        calls.append(season)
+        return dict(results)
+
+    svc = WinProbService(rows=WP_ROWS, results_provider=provider)
+    board = svc.get()
+    assert board["season"] == 2026
+    assert board["record"]["total"]["decided"] == 2
+    svc.get()
+    assert len(calls) == 2  # provider consulted each time, model reused when unchanged
+
+    results["13"] = (21, 28)  # week 2 result lands in the store
+    board2 = svc.get()
+    assert board2["record"]["total"]["decided"] == 3
+    assert board2["current_week"] == 2  # one week-2 game still pending
+
+
+def test_dashboard_winprob_api(tmp_path, monkeypatch):
+    import json
+    import threading
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    from eeefut.dashboard import DashboardState, make_handler
+    from eeefut.live import LiveFeed
+    from eeefut.winprob import WinProbService
+
+    monkeypatch.setenv("EEEFUT_CACHE", str(tmp_path))
+    save_season("NFL:2025", inject_chiefs_preset([], "NFL:2025"))
+    state = DashboardState(
+        "NFL:2025",
+        live=LiveFeed(_fake_live_fetch([])),
+        winprob=WinProbService(rows=WP_ROWS, results_provider=lambda s: {"12": (13, 30)}),
+    )
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(state))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        board = json.loads(urllib.request.urlopen(base + "/api/winprob", timeout=5).read())
+        assert board["season"] == 2026 and board["current_week"] == 2
+        assert board["record"]["total"]["record"] == "2-0"
+        assert len(board["games"]) == 4 and len(board["buckets"]) == 5
+        pending = [g for g in board["games"] if not g["played"]]
+        assert all(0 < g["home_prob"] < 1 and g["favorite_margin"] >= 0 for g in pending)
+        html = urllib.request.urlopen(base + "/", timeout=5).read().decode()
+        assert 'data-tab="winprob"' in html and 'id="wpBuckets"' in html
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_cli_host_flag_defaults():
     from eeefut.cli import build_parser
 

@@ -18,6 +18,7 @@ from eeefut.models import Game, GameSnapshot
 from eeefut.similar import find_similar
 from eeefut.store import GameStore
 from eeefut.teams import build_player_table, build_team_table, metric_specs, team_detail, team_summary_row
+from eeefut.winprob import WinProbService, store_results
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -33,11 +34,13 @@ class DashboardState:
         live: LiveFeed | None = None,
         store: GameStore | None = None,
         ingestor: Ingestor | None = None,
+        winprob: WinProbService | None = None,
     ) -> None:
         self.season = season
         self.store = store or GameStore()
         self.live = live or LiveFeed(on_summary=self._persist_live_summary)
         self.ingestor = ingestor or Ingestor(self.store)
+        self.winprob = winprob or WinProbService(results_provider=lambda yr: store_results(self.store, yr))
         self._teams_lock = threading.Lock()
         self._teams_cache: dict[int, tuple[tuple, dict[str, Any]]] = {}
         self.reload()
@@ -226,6 +229,15 @@ def make_handler(state: DashboardState):
 
             if path == "/api/ingest":
                 return self._send(200, _json_bytes(state.ingestor.status()), "application/json")
+
+            if path == "/api/winprob":
+                season_q = (qs.get("season") or [None])[0]
+                force = (qs.get("force") or ["0"])[0] in ("1", "true")
+                try:
+                    board = state.winprob.get(int(season_q) if season_q and season_q.isdigit() else None, force=force)
+                except Exception as exc:  # noqa: BLE001 - schedule download failures surface to the UI
+                    return self._send(502, _json_bytes({"error": str(exc), "games": []}), "application/json")
+                return self._send(200, _json_bytes(board), "application/json")
 
             if path == "/api/matches":
                 rows = [
