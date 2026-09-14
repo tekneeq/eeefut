@@ -24,6 +24,7 @@
         <button class="tab" data-tab="live" role="tab" aria-selected="false">
           Live <span class="tab-badge" id="liveBadge" hidden></span>
         </button>
+        <button class="tab" data-tab="teams" role="tab" aria-selected="false">Teams</button>
         <button class="tab" data-tab="similar" role="tab" aria-selected="false">Similar</button>
       </nav>
       <button type="button" class="preset" id="chiefsPreset" title="Load Chiefs 28' snapshot">
@@ -70,6 +71,28 @@
           </div>
         </div>
         <div id="liveGrid" class="chiclet-grid" aria-live="polite"></div>
+      </section>
+
+      <section id="panel-teams" class="panel" role="tabpanel" hidden>
+        <div class="panel-head">
+          <h1>Teams</h1>
+          <p class="lede">
+            Offense and defense metrics with league ranks, built from every stored drive and play. Click a team for
+            tendencies, top players, and drive-by-drive game logs.
+          </p>
+        </div>
+        <div class="toolbar live-toolbar" id="teamsToolbar">
+          <label class="search">
+            <span>Filter</span>
+            <input id="teamFilter" type="search" placeholder="KC, Ravens…" autocomplete="off" />
+          </label>
+          <div class="live-status">
+            <span id="teamsMeta" class="live-meta">Loading…</span>
+            <button type="button" class="refresh" id="teamsSync" title="Fetch completed games from ESPN">Sync games</button>
+          </div>
+        </div>
+        <div id="teamsGrid" class="chiclet-grid team-grid"></div>
+        <div id="teamDetail" class="team-detail" hidden></div>
       </section>
 
       <section id="panel-similar" class="panel" role="tabpanel" hidden>

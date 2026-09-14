@@ -326,10 +326,18 @@ def attach_snapshot(game: dict[str, Any]) -> None:
 class LiveFeed:
     """Cached scoreboard + per-game summaries; safe to call from many request threads."""
 
-    def __init__(self, fetch: FetchJson = fetch_json, *, ttl: float = SCOREBOARD_TTL, workers: int = 8) -> None:
+    def __init__(
+        self,
+        fetch: FetchJson = fetch_json,
+        *,
+        ttl: float = SCOREBOARD_TTL,
+        workers: int = 8,
+        on_summary: Callable[[dict[str, Any], dict[str, Any]], None] | None = None,
+    ) -> None:
         self._fetch = fetch
         self._ttl = ttl
         self._workers = max(1, workers)
+        self._on_summary = on_summary
         self._lock = threading.Lock()
         self._payload: dict[str, Any] | None = None
         self._fetched_at = 0.0
@@ -351,6 +359,11 @@ class LiveFeed:
         except Exception:  # noqa: BLE001 - a missing box score must not break the board
             return cached[1] if cached else None
         self._summaries[gid] = (now, summary, game["state"])
+        if self._on_summary is not None:
+            try:
+                self._on_summary(game, summary)
+            except Exception:  # noqa: BLE001 - persistence problems must not break the board
+                pass
         return summary
 
     def _build(self, now: float) -> dict[str, Any]:

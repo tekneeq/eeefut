@@ -5,25 +5,41 @@ from __future__ import annotations
 import json
 import re
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from eeefut.data import load_season, previous_season_label
+from eeefut.ingest import Ingestor
 from eeefut.live import LiveFeed
 from eeefut.models import Game, GameSnapshot
 from eeefut.similar import find_similar
+from eeefut.store import GameStore
+from eeefut.teams import build_player_table, build_team_table, metric_specs, team_detail, team_summary_row
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 CHIEFS_PRESET_RE = re.compile(r"preset:Chiefs:28")
+TEAM_PATH_RE = re.compile(r"^/api/teams/([A-Za-z]{2,4})$")
+GAME_PATH_RE = re.compile(r"^/api/games/(\d+)$")
 
 
 class DashboardState:
-    def __init__(self, season: str, live: LiveFeed | None = None) -> None:
+    def __init__(
+        self,
+        season: str,
+        live: LiveFeed | None = None,
+        store: GameStore | None = None,
+        ingestor: Ingestor | None = None,
+    ) -> None:
         self.season = season
-        self.live = live or LiveFeed()
+        self.store = store or GameStore()
+        self.live = live or LiveFeed(on_summary=self._persist_live_summary)
+        self.ingestor = ingestor or Ingestor(self.store)
+        self._teams_lock = threading.Lock()
+        self._teams_cache: dict[int, tuple[tuple, dict[str, Any]]] = {}
         self.reload()
 
     def reload(self) -> None:
@@ -35,6 +51,54 @@ class DashboardState:
         except ValueError:
             self.history = []
         self.corpus = [*self.history, *self.matches]
+
+    def _persist_live_summary(self, game: dict[str, Any], summary: dict[str, Any]) -> None:
+        """Called by LiveFeed for every freshly fetched box score; keeps finals once."""
+        if game.get("state") not in ("in", "post"):
+            return
+        season = int(((summary.get("header") or {}).get("season") or {}).get("year") or 0)
+        if game["state"] == "post" and season and self.store.state_of(season, game["id"]) == "post":
+            return
+        self.store.save_summary(summary)
+
+    def teams_season(self, requested: str | None) -> int:
+        if requested and requested.isdigit():
+            return int(requested)
+        seasons = self.store.seasons()
+        if seasons:
+            return seasons[-1]
+        m = re.search(r"(\d{4})", self.season)
+        return int(m.group(1)) + 1 if m else 0
+
+    def _store_signature(self, season: int) -> tuple:
+        season_dir = self.store.root / str(season)
+        if not season_dir.is_dir():
+            return ()
+        return tuple(sorted((p.name, p.stat().st_mtime_ns) for p in season_dir.glob("*.json")))
+
+    def teams_bundle(self, season: int) -> dict[str, Any]:
+        sig = self._store_signature(season)
+        with self._teams_lock:
+            hit = self._teams_cache.get(season)
+            if hit and hit[0] == sig:
+                return hit[1]
+        games = self.store.games(season)
+        rosters = self.store.load_rosters(season)
+        known = self.store.load_teams(season)
+        table = build_team_table(games, known)
+        players = build_player_table(games, rosters)
+        bundle = {
+            "season": season,
+            "games": games,
+            "table": table,
+            "by_abbr": {t["abbr"]: t for t in table},
+            "players": players,
+            "completed": sum(1 for g in games if g.get("state") == "post"),
+            "live": sum(1 for g in games if g.get("state") == "in"),
+        }
+        with self._teams_lock:
+            self._teams_cache[season] = (sig, bundle)
+        return bundle
 
 
 def _json_bytes(payload: Any) -> bytes:
@@ -62,6 +126,22 @@ def make_handler(state: DashboardState):
                 self.do_GET()
             finally:
                 self._omit_body = False
+
+        def do_POST(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            qs = parse_qs(parsed.query)
+            length = int(self.headers.get("Content-Length") or 0)
+            if length:
+                self.rfile.read(length)
+            if parsed.path == "/api/ingest":
+                season = state.teams_season((qs.get("season") or [None])[0])
+                include_live = (qs.get("live") or ["0"])[0] in ("1", "true")
+                started = state.ingestor.start(season, include_live=include_live)
+                status = state.ingestor.status()
+                status["started"] = started
+                status["season"] = season
+                return self._send(202 if started else 200, _json_bytes(status), "application/json")
+            return self._send(404, b"not found", "text/plain; charset=utf-8")
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -103,6 +183,49 @@ def make_handler(state: DashboardState):
                 except Exception as exc:  # noqa: BLE001 - surface feed outages to the UI
                     return self._send(502, _json_bytes({"error": str(exc), "games": []}), "application/json")
                 return self._send(200, _json_bytes(board), "application/json")
+
+            if path == "/api/teams":
+                season = state.teams_season((qs.get("season") or [None])[0])
+                bundle = state.teams_bundle(season)
+                return self._send(
+                    200,
+                    _json_bytes(
+                        {
+                            "season": season,
+                            "seasons": state.store.seasons(),
+                            "games_stored": len(bundle["games"]),
+                            "completed": bundle["completed"],
+                            "live": bundle["live"],
+                            "players": len(bundle["players"]),
+                            "metrics": metric_specs(),
+                            "teams": [team_summary_row(t) for t in bundle["table"]],
+                            "ingest": state.ingestor.status(),
+                        }
+                    ),
+                    "application/json",
+                )
+
+            team_match = TEAM_PATH_RE.match(path)
+            if team_match:
+                season = state.teams_season((qs.get("season") or [None])[0])
+                bundle = state.teams_bundle(season)
+                team = bundle["by_abbr"].get(team_match.group(1).upper())
+                if not team:
+                    return self._send(404, _json_bytes({"error": "team not found"}), "application/json")
+                detail = team_detail(team, bundle["games"], bundle["players"])
+                detail["season"] = season
+                detail["metrics"] = metric_specs()
+                return self._send(200, _json_bytes(detail), "application/json")
+
+            game_match = GAME_PATH_RE.match(path)
+            if game_match:
+                record = state.store.find(game_match.group(1))
+                if not record:
+                    return self._send(404, _json_bytes({"error": "game not stored"}), "application/json")
+                return self._send(200, _json_bytes(record), "application/json")
+
+            if path == "/api/ingest":
+                return self._send(200, _json_bytes(state.ingestor.status()), "application/json")
 
             if path == "/api/matches":
                 rows = [

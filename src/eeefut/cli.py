@@ -28,6 +28,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="SPEC",
         help="Warm cache for a season, e.g. NFL:2025 (also pulls previous season)",
     )
+    p.add_argument(
+        "--ingest",
+        metavar="SPEC",
+        help="Backfill drives / plays / players for completed games, e.g. NFL:2026 (ESPN)",
+    )
     p.add_argument("--season", default=None, help="Season label for queries (default: last warmed)")
     p.add_argument("--similar", metavar="MATCH_ID", help="Print similar lookalikes for a game")
     p.add_argument("--minute", type=int, default=28, help="Cut minute for --similar (elapsed 1–60)")
@@ -48,6 +53,22 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Cache root: {cache_root()}")
         for label, n in counts.items():
             print(f"Warmed {label}: {n} matches")
+
+    if args.ingest:
+        from eeefut.ingest import Ingestor
+        from eeefut.store import GameStore
+
+        _, year = parse_warm_spec(args.ingest)
+        store = GameStore()
+        before = store.count(year)
+        status = Ingestor(store).run(year)
+        print(f"Cache root: {cache_root()}")
+        print(
+            f"Ingested NFL:{year}: {status['fetched']} games fetched, {status['skipped']} already stored, "
+            f"{store.count(year)} total (was {before}), {len(store.load_rosters(year))} rostered players"
+        )
+        for err in status["errors"]:
+            print(f"  ! {err}", file=sys.stderr)
 
     if args.similar:
         season = args.season or _default_season()
@@ -104,7 +125,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Cache: {cache_root()}")
         serve(port=args.port, season=season, host=args.host)
 
-    if not args.warm and not args.dashboard and not args.similar:
+    if not args.warm and not args.dashboard and not args.similar and not args.ingest:
         build_parser().print_help()
         raise SystemExit(0)
 

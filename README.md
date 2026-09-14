@@ -15,11 +15,16 @@ Open http://127.0.0.1:8081 — use **Chiefs 28′** for the demo preset (`14'/28
 
 The **Live** tab (`/#live`) shows today's slate as chiclets: score, drive on a football field, last play, box stats, leaders, and a **Similar N′** button that freezes the live snapshot into lookalikes. Data comes from ESPN's public scoreboard (`/api/live`, 20s cache; the box needs outbound HTTPS to `site.api.espn.com`).
 
+The **Teams** tab (`/#teams`, `/#teams/KC`) aggregates every stored game into offense / defense metrics with league ranks (yards for and allowed, rush/pass splits, points per drive, 3-and-outs, turnovers…), tendencies (run/pass mix, deep vs short shots, rush/pass direction), top players by category, and a game log that drills into every drive and play. Games are stored under `<cache>/games/<season>/<event_id>.json` with drives → plays (tagged pass/rush, depth, direction, sack, turnover, explosive, participants when ESPN provides them) and each player's box lines; `_rosters.json` holds positions. Finals are persisted automatically by the Live poller; use **Sync games** (or `--ingest`) to backfill a season.
+
 ## CLI
 
 ```bash
 # Warm current + previous season into ~/.eeefut/cache
 uv run eeefut --warm NFL:2025
+
+# Backfill drives / plays / players for completed games (skips ones already stored)
+uv run eeefut --ingest NFL:2026
 
 # Similar lookalikes for a game at elapsed minute 28 (Q2 2:00)
 uv run eeefut --similar Chiefs --minute 28

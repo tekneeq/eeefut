@@ -14,8 +14,20 @@
     },
   };
 
+  state.teams = {
+    board: null,
+    filter: "",
+    detail: null,
+    detailAbbr: null,
+    openGame: null,
+    openDrives: new Set(),
+    gameCache: new Map(),
+    syncTimer: null,
+    loading: false,
+  };
+
   const LIVE_REFRESH_MS = 20000;
-  const VALID_TABS = new Set(["matches", "live", "similar"]);
+  const VALID_TABS = new Set(["matches", "live", "teams", "similar"]);
 
   const $ = (sel) => document.querySelector(sel);
 
@@ -38,12 +50,16 @@
       panel.classList.toggle("active", on);
       panel.hidden = !on;
     });
-    if (location.hash !== `#${name}`) history.replaceState(null, "", `#${name}`);
+    if (name !== "teams" && location.hash !== `#${name}`) history.replaceState(null, "", `#${name}`);
     if (name === "live") {
       loadLive();
       scheduleLive();
     } else {
       stopLive();
+    }
+    if (name === "teams") {
+      loadTeams();
+      if (!location.hash.startsWith("#teams")) history.replaceState(null, "", "#teams");
     }
   }
 
@@ -250,12 +266,13 @@
     const total = (an ?? 0) + (hn ?? 0);
     const aw = total > 0 && an !== null ? Math.round((an / total) * 100) : 50;
     const hw = total > 0 && hn !== null ? 100 - aw : 50;
+    const pct = (n) => (n >= 14 ? `${n}%` : "");
     return `
       <div class="stat-row">
         <span class="sv away">${esc(a ?? "–")}</span>
-        <span class="sbar" aria-hidden="true">
-          <i class="a" style="width:${aw}%;background:${teamColor(game.away)}"></i>
-          <i class="h" style="width:${hw}%;background:${teamColor(game.home)}"></i>
+        <span class="sbar" role="img" aria-label="${esc(label)} ${aw}% away, ${hw}% home">
+          <span class="seg a" style="width:${aw}%;background:${teamColor(game.away)}">${pct(aw)}</span>
+          <span class="seg h" style="width:${hw}%;background:${teamColor(game.home)}">${pct(hw)}</span>
         </span>
         <span class="sv home">${esc(h ?? "–")}</span>
         <span class="sl">${esc(label)}</span>
@@ -332,10 +349,15 @@
   function winProb(game) {
     const wp = game.situation?.win_prob;
     if (!wp) return "";
-    const homeFav = wp.home >= wp.away;
-    const team = homeFav ? game.home : game.away;
-    const pct = Math.round((homeFav ? wp.home : wp.away) * 100);
-    return `<span class="wp" title="Win probability">${esc(team.abbr)} ${pct}%</span>`;
+    const away = Math.max(0, Math.min(100, Math.round(wp.away * 100)));
+    const home = 100 - away;
+    const label = (side, pct) =>
+      pct >= 18 ? `<b>${esc(game[side].abbr)}</b> ${pct}%` : pct >= 10 ? `${pct}%` : "";
+    return `
+      <div class="wp-bar" title="Win probability ${esc(game.away.abbr)} ${away}% · ${esc(game.home.abbr)} ${home}%">
+        <span class="seg a" style="width:${away}%;background:${teamColor(game.away)}">${label("away", away)}</span>
+        <span class="seg h" style="width:${home}%;background:${teamColor(game.home)}">${label("home", home)}</span>
+      </div>`;
   }
 
   function chicletHtml(game) {
@@ -370,12 +392,12 @@
         <header class="chiclet-head">
           ${statusBadge(game)}
           <span class="net">${esc([game.broadcast, game.state === "pre" ? game.venue : ""].filter(Boolean).join(" · "))}</span>
-          ${winProb(game)}
         </header>
         <div class="team-rows">
           ${teamRow(game, "away")}
           ${teamRow(game, "home")}
         </div>
+        ${winProb(game)}
         ${
           s
             ? `<div class="drive">
@@ -501,6 +523,428 @@
     }
   }
 
+  // ------------------------------------------------------------------ Teams
+
+  function rankClass(rank, total) {
+    if (!rank) return "";
+    if (rank <= Math.max(3, Math.round(total / 4))) return "good";
+    if (rank > total - Math.max(3, Math.round(total / 4))) return "bad";
+    return "";
+  }
+
+  function fmtMetric(value, spec) {
+    if (value === null || value === undefined) return "–";
+    return spec.pct ? `${Number(value).toFixed(value % 1 ? 1 : 0)}%` : String(value);
+  }
+
+  async function loadTeams(force = false) {
+    if (state.teams.loading) return;
+    state.teams.loading = true;
+    try {
+      const res = await fetch(`/api/teams${force ? `?t=${Date.now()}` : ""}`);
+      const board = await res.json();
+      if (!res.ok) throw new Error(board.error || `HTTP ${res.status}`);
+      state.teams.board = board;
+    } catch (err) {
+      state.teams.board = { error: err.message || String(err), teams: [] };
+    } finally {
+      state.teams.loading = false;
+    }
+    renderTeams();
+    if (state.teams.detailAbbr) loadTeamDetail(state.teams.detailAbbr, false);
+  }
+
+  async function syncTeams() {
+    const btn = $("#teamsSync");
+    btn.disabled = true;
+    try {
+      const res = await fetch("/api/ingest", { method: "POST" });
+      const status = await res.json();
+      $("#teamsMeta").textContent = status.started ? "Syncing from ESPN…" : `Sync ${status.message}`;
+      if (state.teams.syncTimer) clearInterval(state.teams.syncTimer);
+      state.teams.syncTimer = setInterval(async () => {
+        const st = await (await fetch("/api/ingest")).json();
+        if (!st.running) {
+          clearInterval(state.teams.syncTimer);
+          state.teams.syncTimer = null;
+          btn.disabled = false;
+          await loadTeams(true);
+        } else {
+          $("#teamsMeta").textContent = `Syncing… ${st.message} · ${st.fetched} fetched`;
+        }
+      }, 1500);
+    } catch (err) {
+      $("#teamsMeta").textContent = `Sync failed — ${err.message || err}`;
+      btn.disabled = false;
+    }
+  }
+
+  function teamChiclet(t, total) {
+    const offRank = t.ranks?.offense?.yards_pg;
+    const defRank = t.ranks?.defense?.yards_pg;
+    const live = t.live_game_id ? `<span class="status live"><i class="dot"></i>live</span>` : "";
+    const logo = t.logo
+      ? `<img class="logo" src="${esc(t.logo)}" alt="" loading="lazy" />`
+      : `<span class="logo logo-fallback">${esc(t.abbr.slice(0, 2))}</span>`;
+    const pf = t.games ? (t.points_for / t.games).toFixed(1) : "–";
+    const pa = t.games ? (t.points_against / t.games).toFixed(1) : "–";
+    return `
+      <button type="button" class="chiclet team-chiclet" data-abbr="${esc(t.abbr)}" style="--team:#${esc(t.color)}">
+        <header class="chiclet-head">
+          ${logo}
+          <span class="tname"><b>${esc(t.abbr)}</b><span class="full">${esc(t.name)}</span></span>
+          ${live}
+          <span class="rec-big">${esc(t.record)}</span>
+        </header>
+        ${
+          t.games
+            ? `<div class="team-kpis">
+                 <span class="kpi"><small>PF / PA</small><b>${pf} · ${pa}</b></span>
+                 <span class="kpi"><small>Off yds/g</small><b>${fmtMetric(t.offense.yards_pg, {})}</b>
+                   <i class="rank ${rankClass(offRank, total)}">#${offRank ?? "–"}</i></span>
+                 <span class="kpi"><small>Def yds/g</small><b>${fmtMetric(t.defense.yards_pg, {})}</b>
+                   <i class="rank ${rankClass(defRank, total)}">#${defRank ?? "–"}</i></span>
+                 <span class="kpi"><small>Rush / Deep</small><b>${fmtMetric(t.offense.rush_rate, { pct: true })} · ${fmtMetric(t.offense.deep_rate, { pct: true })}</b></span>
+               </div>`
+            : `<div class="pre-note">No completed games stored yet</div>`
+        }
+      </button>`;
+  }
+
+  function renderTeams() {
+    const grid = $("#teamsGrid");
+    const meta = $("#teamsMeta");
+    const board = state.teams.board;
+    if (!board) {
+      grid.innerHTML = `<p class="lede">Loading…</p>`;
+      return;
+    }
+    if (board.error) {
+      grid.innerHTML = `<p class="lede">Teams unavailable — ${esc(board.error)}</p>`;
+      meta.textContent = "Offline";
+      return;
+    }
+    const bits = [`${board.season}`, `${board.completed} games stored`, `${board.players} players`];
+    if (board.live) bits.push(`${board.live} live`);
+    if (board.ingest?.running) bits.push(`syncing ${board.ingest.message}`);
+    meta.textContent = bits.join(" · ");
+    $("#teamsSync").disabled = Boolean(board.ingest?.running);
+
+    const q = state.teams.filter.trim().toLowerCase();
+    const teams = (board.teams || []).filter((t) => !q || `${t.abbr} ${t.name} ${t.full_name}`.toLowerCase().includes(q));
+    const total = (board.teams || []).filter((t) => t.games > 0).length || 32;
+    if (!teams.length) {
+      grid.innerHTML = `<p class="lede">${board.teams?.length ? "No team matches that filter." : "No games stored yet — hit Sync games."}</p>`;
+    } else {
+      grid.innerHTML = teams.map((t) => teamChiclet(t, total)).join("");
+    }
+    const showDetail = Boolean(state.teams.detailAbbr);
+    grid.hidden = showDetail;
+    $("#teamsToolbar").hidden = showDetail;
+    $("#teamDetail").hidden = !showDetail;
+  }
+
+  async function loadTeamDetail(abbr, scroll = true) {
+    state.teams.detailAbbr = abbr;
+    history.replaceState(null, "", `#teams/${abbr}`);
+    renderTeams();
+    const box = $("#teamDetail");
+    if (!state.teams.detail || state.teams.detail.abbr !== abbr) {
+      box.innerHTML = `<p class="lede">Loading ${esc(abbr)}…</p>`;
+    }
+    try {
+      const res = await fetch(`/api/teams/${encodeURIComponent(abbr)}`);
+      const detail = await res.json();
+      if (!res.ok) throw new Error(detail.error || `HTTP ${res.status}`);
+      state.teams.detail = detail;
+    } catch (err) {
+      box.innerHTML = `<button type="button" class="mini" data-act="back">← Teams</button><p class="lede">${esc(err.message || err)}</p>`;
+      return;
+    }
+    renderTeamDetail();
+    if (scroll) window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function closeTeamDetail() {
+    state.teams.detailAbbr = null;
+    state.teams.detail = null;
+    state.teams.openGame = null;
+    state.teams.openDrives.clear();
+    history.replaceState(null, "", "#teams");
+    renderTeams();
+  }
+
+  function metricTable(detail, view, total) {
+    const specs = detail.metrics || [];
+    const values = detail[view] || {};
+    const ranks = detail.ranks?.[view] || {};
+    return specs
+      .map((spec) => {
+        const rank = ranks[spec.key];
+        const label = view === "defense" ? spec.defense_label : spec.label;
+        return `
+          <div class="metric-row ${spec.ranked ? "" : "tendency"}">
+            <span class="ml">${esc(label)}</span>
+            <span class="mv">${fmtMetric(values[spec.key], spec)}</span>
+            <span class="mr">${spec.ranked && rank ? `<i class="rank ${rankClass(rank, total)}">#${rank}</i>` : ""}</span>
+          </div>`;
+      })
+      .join("");
+  }
+
+  function mixBar(label, a, b, la, lb, colorA, colorB) {
+    const total = (a || 0) + (b || 0);
+    if (!total) return "";
+    const pa = Math.round((a / total) * 100);
+    const pb = 100 - pa;
+    return `
+      <div class="mix">
+        <span class="mix-label">${esc(label)}</span>
+        <div class="wp-bar">
+          <span class="seg a" style="width:${pa}%;background:${colorA}">${pa >= 12 ? `${esc(la)} ${pa}%` : ""}</span>
+          <span class="seg h" style="width:${pb}%;background:${colorB}">${pb >= 12 ? `${esc(lb)} ${pb}%` : ""}</span>
+        </div>
+        <span class="mix-n">${a} / ${b}</span>
+      </div>`;
+  }
+
+  function dirBar(label, dir) {
+    const total = dir.left + dir.middle + dir.right;
+    if (!total) return "";
+    const pct = (n) => Math.round((n / total) * 100);
+    return `
+      <div class="mix">
+        <span class="mix-label">${esc(label)}</span>
+        <div class="wp-bar dir">
+          <span class="seg" style="width:${pct(dir.left)}%">L ${pct(dir.left)}%</span>
+          <span class="seg mid" style="width:${pct(dir.middle)}%">M ${pct(dir.middle)}%</span>
+          <span class="seg" style="width:${pct(dir.right)}%">R ${pct(dir.right)}%</span>
+        </div>
+        <span class="mix-n">${dir.left} / ${dir.middle} / ${dir.right}</span>
+      </div>`;
+  }
+
+  function playersBlock(title, rows, fmt) {
+    if (!rows || !rows.length) return "";
+    return `
+      <div class="pl-block">
+        <h4>${esc(title)}</h4>
+        ${rows
+          .map(
+            (p) => `
+          <div class="pl-row">
+            <span class="pl-pos">${esc(p.position || "–")}</span>
+            <span class="pl-name">${esc(p.name)}</span>
+            <span class="pl-line">${esc(fmt(p.totals))}</span>
+          </div>`
+          )
+          .join("")}
+      </div>`;
+  }
+
+  function gameLogRow(g) {
+    const open = state.teams.openGame === g.id;
+    const cls = g.result === "W" ? "win" : g.result === "L" ? "loss" : "";
+    const when = g.week ? `W${g.week}` : g.date.slice(0, 10);
+    return `
+      <div class="glog ${cls} ${open ? "open" : ""}" data-game="${esc(g.id)}">
+        <button type="button" class="glog-head" data-act="game" data-game="${esc(g.id)}">
+          <span class="glog-week">${esc(when)}</span>
+          <span class="glog-opp">${g.home_away === "home" ? "vs" : "@"} ${esc(g.opponent)}</span>
+          <span class="glog-res ${cls}">${esc(g.result || g.status_detail)} ${esc(g.score)}</span>
+          <span class="glog-stat">${g.yards_for} / ${g.yards_against} yds</span>
+          <span class="glog-stat">${g.rush_for}r ${g.pass_for}p · allowed ${g.rush_against}r ${g.pass_against}p</span>
+          <span class="glog-stat">TO ${g.turnovers} / ${g.takeaways}</span>
+          <span class="glog-caret">${open ? "▾" : "▸"}</span>
+        </button>
+        ${open ? `<div class="drives" id="drives-${esc(g.id)}"><p class="lede">Loading drives…</p></div>` : ""}
+      </div>`;
+  }
+
+  function renderTeamDetail() {
+    const d = state.teams.detail;
+    const box = $("#teamDetail");
+    if (!d) return;
+    const total = (state.teams.board?.teams || []).filter((t) => t.games > 0).length || 32;
+    const color = `#${d.color}`;
+    const pf = d.games ? (d.points_for / d.games).toFixed(1) : "–";
+    const pa = d.games ? (d.points_against / d.games).toFixed(1) : "–";
+    const om = d.offense_mix || {};
+    const dm = d.defense_mix || {};
+    const tp = d.top_players || {};
+    box.innerHTML = `
+      <div class="detail-head" style="--team:${color}">
+        <button type="button" class="mini" data-act="back">← Teams</button>
+        ${d.logo ? `<img class="logo big" src="${esc(d.logo)}" alt="" />` : ""}
+        <div class="detail-title">
+          <h2>${esc(d.full_name || d.name)}</h2>
+          <div class="detail-sub">
+            <span>${esc(d.record)}</span>
+            <span>PF ${d.points_for} · PA ${d.points_against} · ${d.point_diff >= 0 ? "+" : ""}${d.point_diff}</span>
+            <span>${pf} / ${pa} per game</span>
+            <span>${d.games} game${d.games === 1 ? "" : "s"} · ${d.roster_size} players used</span>
+            ${d.live_game_id ? `<span class="status live"><i class="dot"></i>live now</span>` : ""}
+          </div>
+        </div>
+      </div>
+
+      <div class="detail-grid">
+        <section class="card">
+          <h3>Offense</h3>
+          ${metricTable(d, "offense", total)}
+        </section>
+        <section class="card">
+          <h3>Defense</h3>
+          ${metricTable(d, "defense", total)}
+        </section>
+      </div>
+
+      <div class="detail-grid">
+        <section class="card">
+          <h3>Offensive tendencies</h3>
+          ${mixBar("Run / pass", om.rush, om.pass, "Run", "Pass", "#3f7f5f", "#3a6ea5")}
+          ${mixBar("Pass depth", om.short, om.deep, "Short", "Deep", "#3a6ea5", "#b0413e")}
+          ${dirBar("Rush direction", om.rush_dir || { left: 0, middle: 0, right: 0 })}
+          ${dirBar("Pass direction", om.pass_dir || { left: 0, middle: 0, right: 0 })}
+          <div class="mini-kpis">
+            <span><b>${om.explosive ?? 0}</b> explosive plays</span>
+            <span><b>${om.td_drives ?? 0}</b>/${om.drives ?? 0} TD drives</span>
+            <span><b>${om.three_and_outs ?? 0}</b> three-and-outs</span>
+            <span><b>${om.sacks ?? 0}</b> sacks taken</span>
+          </div>
+        </section>
+        <section class="card">
+          <h3>What the defense faces</h3>
+          ${mixBar("Run / pass faced", dm.rush, dm.pass, "Run", "Pass", "#3f7f5f", "#3a6ea5")}
+          ${mixBar("Depth faced", dm.short, dm.deep, "Short", "Deep", "#3a6ea5", "#b0413e")}
+          ${dirBar("Rush direction faced", dm.rush_dir || { left: 0, middle: 0, right: 0 })}
+          ${dirBar("Pass direction faced", dm.pass_dir || { left: 0, middle: 0, right: 0 })}
+          <div class="mini-kpis">
+            <span><b>${dm.explosive ?? 0}</b> explosive allowed</span>
+            <span><b>${dm.td_drives ?? 0}</b>/${dm.drives ?? 0} TD drives allowed</span>
+            <span><b>${dm.three_and_outs ?? 0}</b> three-and-outs forced</span>
+            <span><b>${dm.sacks ?? 0}</b> sacks</span>
+          </div>
+        </section>
+      </div>
+
+      <section class="card">
+        <h3>Top players</h3>
+        <div class="players-grid">
+          ${playersBlock("Passing", tp.passing, (t) => `${t.completions ?? 0}/${t.pass_att ?? 0} · ${t.pass_yds} yds · ${t.pass_td ?? 0} TD · ${t.pass_int ?? 0} INT`)}
+          ${playersBlock("Rushing", tp.rushing, (t) => `${t.rush_att ?? 0} car · ${t.rush_yds} yds · ${t.rush_td ?? 0} TD`)}
+          ${playersBlock("Receiving", tp.receiving, (t) => `${t.rec ?? 0} rec / ${t.targets ?? 0} tgt · ${t.rec_yds} yds · ${t.rec_td ?? 0} TD`)}
+          ${playersBlock("Tackles", tp.tackles, (t) => `${t.tackles} tot · ${t.solo ?? 0} solo · ${t.tfl ?? 0} TFL`)}
+          ${playersBlock("Sacks", tp.sacks, (t) => `${t.sacks} sacks · ${t.qb_hits ?? 0} QB hits`)}
+          ${playersBlock("Pass defense", tp.pass_defense, (t) => `${t.pass_def} PD · ${t.int ?? 0} INT`)}
+          ${playersBlock("Interceptions", tp.interceptions, (t) => `${t.int} INT · ${t.int_yds ?? 0} yds`)}
+        </div>
+      </section>
+
+      <section class="card">
+        <h3>Game log <small>click a game for drives and plays</small></h3>
+        <div class="glog-list">
+          ${(d.game_log || []).map(gameLogRow).join("") || `<p class="lede">No games yet.</p>`}
+        </div>
+      </section>`;
+    if (state.teams.openGame) renderDrives(state.teams.openGame);
+  }
+
+  function playTag(p) {
+    if (p.kind === "pass") return `PASS${p.depth ? ` ${p.depth.toUpperCase()}` : ""}${p.direction ? ` ${p.direction[0].toUpperCase()}` : ""}${p.sack ? " · SACK" : ""}`;
+    if (p.kind === "rush") return `RUSH${p.direction ? ` ${p.direction[0].toUpperCase()}` : ""}`;
+    return (p.kind || p.type || "").toUpperCase();
+  }
+
+  function driveRow(drive, game, teamAbbr) {
+    const key = drive.id;
+    const open = state.teams.openDrives.has(key);
+    const mine = drive.team === teamAbbr;
+    const scoreCls = drive.result === "TD" ? "td" : drive.result === "FG" ? "fg" : /INT|FUMBLE|DOWNS|SAFETY/.test(drive.result) ? "to" : "";
+    const realPlays = drive.plays.filter((p) => p.kind === "pass" || p.kind === "rush");
+    const passes = realPlays.filter((p) => p.kind === "pass").length;
+    const deep = realPlays.filter((p) => p.depth === "deep").length;
+    return `
+      <div class="drive ${mine ? "mine" : "theirs"} ${open ? "open" : ""}">
+        <button type="button" class="drive-head" data-act="drive" data-drive="${esc(key)}">
+          <span class="drive-team">${esc(drive.team)}</span>
+          <span class="drive-q">Q${drive.start_period} ${esc(drive.start_clock)}</span>
+          <span class="drive-desc">${esc(drive.description)} · ${esc(drive.start_text)} → ${esc(drive.end_text)}</span>
+          <span class="drive-mix">${realPlays.length - passes}r / ${passes}p${deep ? ` · ${deep} deep` : ""}</span>
+          <span class="drive-res ${scoreCls}">${esc(drive.result || "—")}${drive.points ? ` +${drive.points}` : ""}</span>
+        </button>
+        ${
+          open
+            ? `<div class="plays">
+                ${drive.plays
+                  .filter((p) => p.kind !== "admin")
+                  .map(
+                    (p) => `
+                  <div class="play ${esc(p.kind)} ${p.explosive ? "explosive" : ""} ${p.turnover ? "turnover" : ""} ${p.scoring ? "scoring" : ""}">
+                    <span class="play-dd">${esc(p.down_distance || p.type)}</span>
+                    <span class="play-tag">${esc(playTag(p))}</span>
+                    <span class="play-text">${esc(p.text)}</span>
+                    <span class="play-yds">${p.kind === "pass" || p.kind === "rush" ? `${p.yards > 0 ? "+" : ""}${p.yards}` : ""}</span>
+                    ${
+                      p.participants?.length
+                        ? `<span class="play-part">${p.participants.map((x) => `${esc(x.name)}${x.position ? ` (${esc(x.position)})` : ""}`).join(", ")}</span>`
+                        : ""
+                    }
+                  </div>`
+                  )
+                  .join("")}
+              </div>`
+            : ""
+        }
+      </div>`;
+  }
+
+  async function renderDrives(gameId) {
+    const host = document.getElementById(`drives-${gameId}`);
+    if (!host) return;
+    let game = state.teams.gameCache.get(gameId);
+    if (!game) {
+      try {
+        const res = await fetch(`/api/games/${encodeURIComponent(gameId)}`);
+        game = await res.json();
+        if (!res.ok) throw new Error(game.error || `HTTP ${res.status}`);
+        state.teams.gameCache.set(gameId, game);
+      } catch (err) {
+        host.innerHTML = `<p class="lede">${esc(err.message || err)}</p>`;
+        return;
+      }
+    }
+    if (state.teams.openGame !== gameId) return;
+    const team = state.teams.detail?.abbr;
+    const drives = game.drives || [];
+    host.innerHTML = drives.length
+      ? `<div class="drive-list">${drives.map((dr) => driveRow(dr, game, team)).join("")}</div>`
+      : `<p class="lede">No drive data stored for this game.</p>`;
+  }
+
+  function onTeamsClick(ev) {
+    const chip = ev.target.closest(".team-chiclet");
+    if (chip) {
+      loadTeamDetail(chip.dataset.abbr);
+      return;
+    }
+    const btn = ev.target.closest("button[data-act]");
+    if (!btn) return;
+    if (btn.dataset.act === "back") {
+      closeTeamDetail();
+    } else if (btn.dataset.act === "game") {
+      const id = btn.dataset.game;
+      state.teams.openGame = state.teams.openGame === id ? null : id;
+      state.teams.openDrives.clear();
+      renderTeamDetail();
+    } else if (btn.dataset.act === "drive") {
+      const key = btn.dataset.drive;
+      if (state.teams.openDrives.has(key)) state.teams.openDrives.delete(key);
+      else state.teams.openDrives.add(key);
+      renderDrives(state.teams.openGame);
+    }
+  }
+
   // ------------------------------------------------------------------- Boot
 
   async function boot() {
@@ -531,10 +975,27 @@
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible" && currentTab() === "live") loadLive();
     });
-    window.addEventListener("hashchange", () => switchTab(location.hash.replace("#", "")));
+    $("#panel-teams").addEventListener("click", onTeamsClick);
+    $("#teamsSync").addEventListener("click", syncTeams);
+    $("#teamFilter").addEventListener("input", (ev) => {
+      state.teams.filter = ev.target.value || "";
+      renderTeams();
+    });
+    window.addEventListener("hashchange", () => {
+      const [tab, arg] = location.hash.replace("#", "").split("/");
+      if (tab === "teams" && arg) {
+        switchTab("teams");
+        loadTeamDetail(arg.toUpperCase(), false);
+      } else if (currentTab() !== tab) {
+        switchTab(tab);
+      }
+    });
 
-    const initial = location.hash.replace("#", "");
-    if (VALID_TABS.has(initial) && initial !== "matches") switchTab(initial);
+    const [initial, initialArg] = location.hash.replace("#", "").split("/");
+    if (initial === "teams" && initialArg) {
+      state.teams.detailAbbr = initialArg.toUpperCase();
+      switchTab("teams");
+    } else if (VALID_TABS.has(initial) && initial !== "matches") switchTab(initial);
     else fetch("/api/live").then((r) => r.json()).then((b) => {
       if (b && b.counts?.live) {
         $("#liveBadge").textContent = b.counts.live;
