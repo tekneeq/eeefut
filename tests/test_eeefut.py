@@ -543,6 +543,320 @@ def test_dashboard_live_api(tmp_path, monkeypatch):
         httpd.server_close()
 
 
+def _summary_fixture(event_id: str, home: tuple[str, str, int], away: tuple[str, str, int], state: str = "post") -> dict:
+    """Compact ESPN-shaped summary: header, boxscore (teams + players), drives with plays."""
+    (hid, habbr, hscore), (aid, aabbr, ascore) = home, away
+    play = lambda pid, text, ptype, yards, down=1, dist=10, tid=hid, scoring=False, hs=0, as_=0: {  # noqa: E731
+        "id": pid,
+        "sequenceNumber": pid[-3:],
+        "type": {"text": ptype},
+        "text": text,
+        "period": {"number": 1},
+        "clock": {"displayValue": "10:00"},
+        "start": {"down": down, "distance": dist, "yardLine": 30, "yardsToEndzone": 70, "downDistanceText": f"{down} & {dist}", "team": {"id": tid}},
+        "end": {"yardLine": 30 + yards},
+        "statYardage": yards,
+        "scoringPlay": scoring,
+        "scoreValue": 7 if scoring else 0,
+        "homeScore": hs,
+        "awayScore": as_,
+        "participants": [{"athlete": {"id": f"{event_id}p1", "shortName": "Q. Back", "position": {"abbreviation": "QB"}, "team": {"abbreviation": habbr}}}],
+    }
+    return {
+        "header": {
+            "id": event_id,
+            "season": {"year": 2026, "type": 2},
+            "week": 1,
+            "competitions": [
+                {
+                    "id": event_id,
+                    "date": "2026-09-13T17:00Z",
+                    "status": {"type": {"state": state, "completed": state == "post", "shortDetail": "Final" if state == "post" else "Q2 5:00"}},
+                    "competitors": [
+                        {"homeAway": "home", "score": str(hscore), "winner": hscore > ascore, "team": {"id": hid, "abbreviation": habbr, "nickname": habbr, "displayName": f"{habbr} Team", "logos": [{"href": f"https://x/{habbr}.png"}], "color": "112233"}, "record": [{"type": "total", "summary": "1-0"}]},
+                        {"homeAway": "away", "score": str(ascore), "winner": ascore > hscore, "team": {"id": aid, "abbreviation": aabbr, "nickname": aabbr, "displayName": f"{aabbr} Team", "logos": [{"href": f"https://x/{aabbr}.png"}]}},
+                    ],
+                }
+            ],
+        },
+        "gameInfo": {"venue": {"fullName": "Test Field"}},
+        "boxscore": {
+            "teams": [
+                {"team": {"id": hid, "abbreviation": habbr}, "homeAway": "home", "statistics": [
+                    {"name": "totalYards", "displayValue": "400"}, {"name": "rushingYards", "displayValue": "150"},
+                    {"name": "netPassingYards", "displayValue": "250"}, {"name": "rushingAttempts", "displayValue": "30"},
+                    {"name": "completionAttempts", "displayValue": "20/30"}, {"name": "firstDowns", "displayValue": "22"},
+                    {"name": "thirdDownEff", "displayValue": "6-12"}, {"name": "redZoneAttempts", "displayValue": "2-3"},
+                    {"name": "turnovers", "displayValue": "1"}, {"name": "sacksYardsLost", "displayValue": "2-15"},
+                    {"name": "totalOffensivePlays", "displayValue": "60"},
+                ]},
+                {"team": {"id": aid, "abbreviation": aabbr}, "homeAway": "away", "statistics": [
+                    {"name": "totalYards", "displayValue": "300"}, {"name": "rushingYards", "displayValue": "80"},
+                    {"name": "netPassingYards", "displayValue": "220"}, {"name": "rushingAttempts", "displayValue": "20"},
+                    {"name": "completionAttempts", "displayValue": "25/40"}, {"name": "firstDowns", "displayValue": "18"},
+                    {"name": "thirdDownEff", "displayValue": "4-12"}, {"name": "redZoneAttempts", "displayValue": "1-2"},
+                    {"name": "turnovers", "displayValue": "2"}, {"name": "sacksYardsLost", "displayValue": "1-8"},
+                    {"name": "totalOffensivePlays", "displayValue": "60"},
+                ]},
+            ],
+            "players": [
+                {"team": {"id": hid, "abbreviation": habbr}, "statistics": [
+                    {"name": "passing", "labels": ["C/ATT", "YDS", "AVG", "TD", "INT"], "athletes": [{"athlete": {"id": f"{event_id}p1", "displayName": "Quarter Back", "shortName": "Q. Back", "jersey": "9"}, "stats": ["20/30", "250", "8.3", "2", "0"]}]},
+                    {"name": "rushing", "labels": ["CAR", "YDS", "AVG", "TD", "LONG"], "athletes": [{"athlete": {"id": f"{event_id}p2", "displayName": "Run Ner", "shortName": "R. Ner"}, "stats": ["18", "110", "6.1", "1", "40"]}]},
+                    {"name": "defensive", "labels": ["TOT", "SOLO", "SACKS", "TFL", "PD", "QB HTS", "TD"], "athletes": [{"athlete": {"id": f"{event_id}p3", "displayName": "Corner Back", "shortName": "C. Back"}, "stats": ["6", "5", "0", "1", "3", "0", "0"]}]},
+                ]},
+                {"team": {"id": aid, "abbreviation": aabbr}, "statistics": [
+                    {"name": "receiving", "labels": ["REC", "YDS", "AVG", "TD", "LONG", "TGTS"], "athletes": [{"athlete": {"id": f"{event_id}p4", "displayName": "Wide Out", "shortName": "W. Out"}, "stats": ["7", "120", "17.1", "1", "45", "9"]}]},
+                ]},
+            ],
+        },
+        "drives": {
+            "previous": [
+                {
+                    "id": f"{event_id}d1", "team": {"id": hid, "abbreviation": habbr}, "description": "4 plays, 70 yards, 2:10",
+                    "start": {"period": {"number": 1}, "clock": {"displayValue": "12:00"}, "yardLine": 30, "text": f"{habbr} 30"},
+                    "end": {"period": {"number": 1}, "clock": {"displayValue": "9:50"}, "yardLine": 100, "text": "End zone"},
+                    "timeElapsed": {"displayValue": "2:10"}, "yards": 70, "isScore": True, "offensivePlays": 4, "result": "TD",
+                    "plays": [
+                        play("1001", "(Shotgun) Q.Back pass deep right to W.Rec for 35 yards", "Pass Reception", 35),
+                        play("1002", "R.Ner left end for 8 yards", "Rush", 8, 1, 10),
+                        play("1003", "Q.Back pass short middle to T.End for 22 yards", "Pass Reception", 22, 2, 2),
+                        play("1004", "R.Ner up the middle for 5 yards, TOUCHDOWN", "Rushing Touchdown", 5, 1, 5, scoring=True, hs=7),
+                    ],
+                },
+                {
+                    "id": f"{event_id}d2", "team": {"id": aid, "abbreviation": aabbr}, "description": "3 plays, 2 yards, 1:30",
+                    "start": {"period": {"number": 1}, "clock": {"displayValue": "9:50"}, "yardLine": 75, "text": f"{aabbr} 25"},
+                    "end": {"period": {"number": 1}, "clock": {"displayValue": "8:20"}, "yardLine": 73, "text": f"{aabbr} 27"},
+                    "timeElapsed": {"displayValue": "1:30"}, "yards": 2, "isScore": False, "offensivePlays": 3, "result": "PUNT",
+                    "plays": [
+                        play("2001", "A.Way right guard for 2 yards", "Rush", 2, 1, 10, tid=aid, hs=7),
+                        play("2002", "A.Way pass incomplete short left to X.Y", "Pass Incompletion", 0, 2, 8, tid=aid, hs=7),
+                        play("2003", "(Shotgun) A.Way sacked at 27 for -3 yards", "Sack", -3, 3, 8, tid=aid, hs=7),
+                        play("2004", "P.Unter punts 45 yards", "Punt", 45, 4, 11, tid=aid, hs=7),
+                        play("2005", "Timeout #1 by HOME", "Timeout", 0, tid=aid, hs=7),
+                    ],
+                },
+            ]
+        },
+        "scoringPlays": [{"team": {"abbreviation": habbr}, "period": {"number": 1}, "clock": {"displayValue": "9:50"}, "scoringType": {"abbreviation": "TD"}, "text": "R.Ner 5 yd run", "homeScore": 7, "awayScore": 0}],
+    }
+
+
+def test_classify_play_tags():
+    from eeefut.store import classify_play
+
+    deep = classify_play("Pass Reception", "Q.Back pass deep right to W.Rec for 35 yards")
+    assert deep["kind"] == "pass" and deep["depth"] == "deep" and deep["direction"] == "right"
+    inc = classify_play("Pass Incompletion", "A.Way pass incomplete short left to X.Y")
+    assert inc["kind"] == "pass" and inc["depth"] == "short" and inc["direction"] == "left"
+    rush = classify_play("Rush", "R.Ner left end for 8 yards")
+    assert rush["kind"] == "rush" and rush["direction"] == "left"
+    middle = classify_play("Rushing Touchdown", "R.Ner up the middle for 5 yards, TOUCHDOWN")
+    assert middle["kind"] == "rush" and middle["direction"] == "middle" and middle["touchdown"]
+    sack = classify_play("Sack", "(Shotgun) A.Way sacked at 27 for -3 yards")
+    assert sack["kind"] == "pass" and sack["sack"]
+    assert classify_play("Punt", "P.Unter punts 45 yards")["kind"] == "special"
+    assert classify_play("Timeout", "Timeout #1")["kind"] == "admin"
+    assert classify_play("Penalty", "PENALTY on X, False Start")["kind"] == "penalty"
+    assert classify_play("Fumble Recovery (Opponent)", "R.Ner right tackle FUMBLES, recovered by DEF")["turnover"]
+    assert classify_play("Rush", "Q.Back kneels to the 30 for -1 yards")["kind"] == "other"
+
+
+def test_store_roundtrip_and_record_shape(tmp_path, monkeypatch):
+    from eeefut.store import GameStore, build_game_record
+
+    monkeypatch.setenv("EEEFUT_CACHE", str(tmp_path))
+    rec = build_game_record(_summary_fixture("900", ("1", "HOM", 27), ("2", "AWY", 10)))
+    assert rec["id"] == "900" and rec["season"] == 2026 and rec["week"] == 1 and rec["state"] == "post"
+    assert rec["home"]["abbr"] == "HOM" and rec["home"]["winner"] and rec["home"]["record"] == "1-0"
+    assert rec["team_stats"]["home"]["totalYards"] == "400"
+    assert len(rec["drives"]) == 2
+    d1, d2 = rec["drives"]
+    assert d1["side"] == "home" and d1["result"] == "TD" and d1["points"] == 7
+    assert [p["kind"] for p in d1["plays"]] == ["pass", "rush", "pass", "rush"]
+    assert d1["plays"][0]["explosive"] and d1["plays"][0]["depth"] == "deep"
+    assert d1["plays"][0]["participants"][0]["position"] == "QB"
+    assert d2["side"] == "away" and [p["kind"] for p in d2["plays"]] == ["rush", "pass", "pass", "special", "admin"]
+    assert {p["id"] for p in rec["players"]} == {"900p1", "900p2", "900p3", "900p4"}
+    p1 = next(p for p in rec["players"] if p["id"] == "900p1")
+    assert p1["team"] == "HOM" and p1["lines"]["passing"]["YDS"] == "250"
+
+    store = GameStore()
+    store.save(rec)
+    assert store.count(2026) == 1
+    assert store.state_of(2026, "900") == "post"
+    assert store.find("900")["home"]["abbr"] == "HOM"
+    store.save_rosters(2026, {"900p3": {"position": "CB"}}, [{"id": "1", "abbr": "HOM"}])
+    assert store.game_ids(2026) == {"900"}  # rosters file is not a game
+    assert store.load_rosters(2026)["900p3"]["position"] == "CB"
+
+
+def test_team_table_ranks_and_detail(tmp_path, monkeypatch):
+    from eeefut.store import build_game_record
+    from eeefut.teams import build_player_table, build_team_table, team_detail
+
+    games = [
+        build_game_record(_summary_fixture("901", ("1", "HOM", 27), ("2", "AWY", 10))),
+        build_game_record(_summary_fixture("902", ("3", "THR", 20), ("4", "FOR", 24))),
+        build_game_record(_summary_fixture("903", ("1", "HOM", 14), ("4", "FOR", 14), state="in")),
+    ]
+    table = build_team_table(games)
+    by = {t["abbr"]: t for t in table}
+    assert set(by) == {"HOM", "AWY", "THR", "FOR"}
+    hom = by["HOM"]
+    assert hom["record"] == "1-0" and hom["games"] == 1  # in-progress game not counted
+    assert hom["live_game_id"] == "903"
+    assert hom["offense"]["yards_pg"] == 400 and hom["defense"]["yards_pg"] == 300
+    assert hom["offense"]["rush_rate"] == 50.0  # 30 rush att vs 30 pass att
+    assert hom["offense"]["deep_rate"] == 50.0  # 1 deep + 1 short tagged
+    assert hom["offense"]["points_per_drive"] == 7.0 and hom["offense"]["td_drive_pct"] == 100.0
+    assert hom["defense"]["three_and_out_pct"] == 100.0  # forced AWY 3-and-out
+    # Home teams both had 400 yds; away teams 300 -> ranks tie at 1 and 3
+    assert hom["ranks"]["offense"]["yards_pg"] == 1 and by["AWY"]["ranks"]["offense"]["yards_pg"] == 3
+    # Defense: fewer yards allowed is better -> home sides (allowed 300) rank 1
+    assert hom["ranks"]["defense"]["yards_pg"] == 1 and by["AWY"]["ranks"]["defense"]["yards_pg"] == 3
+    # Turnovers: offense lower is better (HOM 1 vs AWY 2); defense takeaways higher is better
+    assert hom["ranks"]["offense"]["turnovers_pg"] == 1
+    assert hom["ranks"]["defense"]["turnovers_pg"] == 1
+    assert table[0]["abbr"] in ("HOM", "FOR")  # winners sort first
+
+    players = build_player_table(games, {"901p3": {"position": "CB"}})
+    p3 = next(p for p in players if p["id"] == "901p3")
+    assert p3["position"] == "CB" and p3["games"] == 1 and p3["totals"]["pass_def"] == 3
+    p1 = next(p for p in players if p["id"] == "901p1")
+    assert p1["totals"]["pass_yds"] == 250 and p1["totals"]["completions"] == 20 and p1["totals"]["pass_att"] == 30
+
+    detail = team_detail(hom, games, players)
+    assert detail["offense_mix"]["rush_pct"] == 50 and detail["offense_mix"]["deep"] == 1
+    assert detail["offense_mix"]["rush_dir"] == {"left": 1, "middle": 1, "right": 0}
+    assert detail["defense_mix"]["sacks"] == 1
+    assert [g["result"] for g in detail["game_log"]] == ["W", ""]
+    assert detail["top_players"]["passing"][0]["name"] == "Quarter Back"
+    assert detail["top_players"]["pass_defense"][0]["position"] == "CB"
+
+
+def test_ingestor_backfills_and_skips_stored(tmp_path, monkeypatch):
+    from eeefut.ingest import Ingestor
+    from eeefut.store import GameStore
+
+    monkeypatch.setenv("EEEFUT_CACHE", str(tmp_path))
+    calls: list[str] = []
+
+    def fetch(url: str) -> dict:
+        calls.append(url)
+        if url.endswith("/teams"):
+            return {"sports": [{"leagues": [{"teams": [{"team": {"id": "1", "abbreviation": "HOM", "nickname": "Homers", "displayName": "Home Team", "logos": [{"href": "l"}]}}]}]}]}
+        if "/roster" in url:
+            return {"athletes": [{"position": "defense", "items": [{"id": "p3", "displayName": "Corner Back", "position": {"abbreviation": "CB"}, "jersey": "24"}]}]}
+        if "week=1" in url:
+            return {"events": [
+                {"id": "901", "competitions": [{"status": {"type": {"state": "post"}}}]},
+                {"id": "903", "competitions": [{"status": {"type": {"state": "in"}}}]},
+            ]}
+        if "week=" in url:
+            return {"events": [{"id": "999", "competitions": [{"status": {"type": {"state": "pre"}}}]}]}
+        if "event=901" in url:
+            return _summary_fixture("901", ("1", "HOM", 27), ("2", "AWY", 10))
+        raise RuntimeError(f"unexpected {url}")
+
+    store = GameStore()
+    ing = Ingestor(store, fetch)
+    status = ing.run(2026)
+    assert status["fetched"] == 1 and status["skipped"] == 0 and not status["errors"]
+    assert status["weeks_done"] == 3  # week 1 + two idle future weeks, then stop
+    assert store.count(2026) == 1
+    assert store.load_rosters(2026)["p3"]["position"] == "CB"
+    assert store.load_teams(2026)[0]["abbr"] == "HOM"
+
+    again = ing.run(2026)
+    assert again["fetched"] == 0 and again["skipped"] == 1
+    assert sum("/roster" in u for u in calls) == 1  # rosters cached
+
+
+def test_dashboard_teams_api(tmp_path, monkeypatch):
+    import json
+    import threading
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    from eeefut.dashboard import DashboardState, make_handler
+    from eeefut.ingest import Ingestor
+    from eeefut.live import LiveFeed
+    from eeefut.store import GameStore
+
+    monkeypatch.setenv("EEEFUT_CACHE", str(tmp_path))
+    save_season("NFL:2025", inject_chiefs_preset([], "NFL:2025"))
+    store = GameStore()
+    store.save_summary(_summary_fixture("901", ("1", "HOM", 27), ("2", "AWY", 10)))
+
+    def fetch(url: str) -> dict:
+        if "week=1" in url:
+            return {"events": [{"id": "902", "competitions": [{"status": {"type": {"state": "post"}}}]}]}
+        if "week=" in url:
+            return {"events": []}
+        if "event=902" in url:
+            return _summary_fixture("902", ("3", "THR", 20), ("2", "AWY", 24))
+        if url.endswith("/teams"):
+            return {"sports": []}
+        raise RuntimeError(url)
+
+    state = DashboardState("NFL:2025", live=LiveFeed(_fake_live_fetch([])), store=store, ingestor=Ingestor(store, fetch))
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(state))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        teams = json.loads(urllib.request.urlopen(base + "/api/teams", timeout=5).read())
+        assert teams["season"] == 2026 and teams["completed"] == 1 and teams["players"] == 4
+        assert {t["abbr"] for t in teams["teams"]} == {"HOM", "AWY"}
+        assert teams["metrics"][0]["key"] == "points_pg"
+
+        detail = json.loads(urllib.request.urlopen(base + "/api/teams/hom", timeout=5).read())
+        assert detail["abbr"] == "HOM" and detail["game_log"][0]["opponent"] == "AWY"
+        assert detail["offense_mix"]["deep"] == 1
+
+        game = json.loads(urllib.request.urlopen(base + "/api/games/901", timeout=5).read())
+        assert len(game["drives"]) == 2 and game["drives"][0]["plays"][0]["depth"] == "deep"
+
+        req = urllib.request.Request(base + "/api/ingest", method="POST", data=b"")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert resp.status == 202
+        state.ingestor.wait(10)
+        status = json.loads(urllib.request.urlopen(base + "/api/ingest", timeout=5).read())
+        assert status["running"] is False and status["fetched"] == 1
+
+        teams2 = json.loads(urllib.request.urlopen(base + "/api/teams", timeout=5).read())
+        assert teams2["completed"] == 2
+        awy = next(t for t in teams2["teams"] if t["abbr"] == "AWY")
+        assert awy["record"] == "1-1" and awy["games"] == 2
+
+        html = urllib.request.urlopen(base + "/", timeout=5).read().decode()
+        assert 'data-tab="teams"' in html and 'id="teamDetail"' in html
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_live_feed_persists_summaries_to_store(tmp_path, monkeypatch):
+    from eeefut.dashboard import DashboardState
+    from eeefut.live import LiveFeed
+    from eeefut.store import GameStore
+
+    monkeypatch.setenv("EEEFUT_CACHE", str(tmp_path))
+    save_season("NFL:2025", inject_chiefs_preset([], "NFL:2025"))
+    store = GameStore()
+    state = DashboardState("NFL:2025", live=LiveFeed(lambda url: {}), store=store)
+
+    live_game = {"id": "401", "state": "in"}
+    state._persist_live_summary(live_game, _summary_fixture("401", ("1", "HOM", 7), ("2", "AWY", 0), state="in"))  # noqa: SLF001
+    assert store.state_of(2026, "401") == "in"
+    state._persist_live_summary({"id": "401", "state": "post"}, _summary_fixture("401", ("1", "HOM", 27), ("2", "AWY", 10)))  # noqa: SLF001
+    assert store.state_of(2026, "401") == "post"
+    assert store.find("401")["home"]["score"] == 27
+    state._persist_live_summary({"id": "402", "state": "pre"}, {})  # noqa: SLF001
+    assert store.count(2026) == 1
+
+
 def test_cli_host_flag_defaults():
     from eeefut.cli import build_parser
 
