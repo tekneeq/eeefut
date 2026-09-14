@@ -25,6 +25,7 @@
           Live <span class="tab-badge" id="liveBadge" hidden></span>
         </button>
         <button class="tab" data-tab="teams" role="tab" aria-selected="false">Teams</button>
+        <button class="tab" data-tab="winprob" role="tab" aria-selected="false">WinProb</button>
         <button class="tab" data-tab="similar" role="tab" aria-selected="false">Similar</button>
       </nav>
       <button type="button" class="preset" id="chiefsPreset" title="Load Chiefs 28' snapshot">
@@ -93,6 +94,37 @@
         </div>
         <div id="teamsGrid" class="chiclet-grid team-grid"></div>
         <div id="teamDetail" class="team-detail" hidden></div>
+      </section>
+
+      <section id="panel-winprob" class="panel" role="tabpanel" hidden>
+        <div class="panel-head">
+          <h1>WinProb</h1>
+          <p class="lede">
+            Pre-game win probability and expected margin for every scheduled game, the model's weekly record, and how
+            favourites actually fared by probability bucket.
+          </p>
+        </div>
+        <div class="toolbar live-toolbar" id="wpToolbar">
+          <div class="live-status">
+            <span id="wpMeta" class="live-meta">Loading model…</span>
+            <button type="button" class="refresh" id="wpRefresh" title="Re-download the schedule and recompute">Refresh</button>
+          </div>
+        </div>
+        <div id="wpRecord" class="wp-record"></div>
+        <div id="wpBuckets" class="card wp-buckets"></div>
+        <div class="wp-week-head">
+          <h2 id="wpWeekTitle">Games</h2>
+          <div class="chip-group" id="wpWeeks" role="group" aria-label="Week"></div>
+        </div>
+        <div id="wpGames" class="chiclet-grid"></div>
+        <details class="card wp-more" id="wpTeams">
+          <summary>Team records when favoured, by bucket</summary>
+          <div id="wpTeamBuckets"></div>
+        </details>
+        <details class="card wp-more" id="wpRatings">
+          <summary>Power ratings (Elo)</summary>
+          <div id="wpRatingList"></div>
+        </details>
       </section>
 
       <section id="panel-similar" class="panel" role="tabpanel" hidden>
