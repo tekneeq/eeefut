@@ -18,7 +18,7 @@ from eeefut.models import Game, GameSnapshot
 from eeefut.similar import find_similar
 from eeefut.store import GameStore
 from eeefut.teams import build_player_table, build_team_table, metric_specs, team_detail, team_summary_row
-from eeefut.winprob import WinProbService, store_results
+from eeefut.winprob import WinProbService, norm_team, store_performance, store_results
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -40,7 +40,10 @@ class DashboardState:
         self.store = store or GameStore()
         self.live = live or LiveFeed(on_summary=self._persist_live_summary)
         self.ingestor = ingestor or Ingestor(self.store)
-        self.winprob = winprob or WinProbService(results_provider=lambda yr: store_results(self.store, yr))
+        self.winprob = winprob or WinProbService(
+            results_provider=lambda yr: store_results(self.store, yr),
+            perf_provider=lambda yr: store_performance(self.store, yr),
+        )
         self._teams_lock = threading.Lock()
         self._teams_cache: dict[int, tuple[tuple, dict[str, Any]]] = {}
         self.reload()
@@ -102,6 +105,19 @@ class DashboardState:
         with self._teams_lock:
             self._teams_cache[season] = (sig, bundle)
         return bundle
+
+    def power_index(self, season: int) -> dict[str, Any]:
+        """Power ratings (with weekly history) keyed by team abbr; empty if the model is unavailable."""
+        try:
+            board = self.winprob.get(season)
+        except Exception:  # noqa: BLE001 - schedule download failure must not break the Teams tab
+            return {"by_team": {}, "weeks": [], "through_week": 0}
+        keys = ("power", "power_delta", "prev_power", "rank", "prev_rank", "rank_change", "elo", "history")
+        return {
+            "by_team": {r["team"]: {k: r.get(k) for k in keys} for r in board.get("ratings", [])},
+            "weeks": board.get("power_weeks", []),
+            "through_week": board.get("through_week", 0),
+        }
 
 
 def _json_bytes(payload: Any) -> bytes:
@@ -190,6 +206,12 @@ def make_handler(state: DashboardState):
             if path == "/api/teams":
                 season = state.teams_season((qs.get("season") or [None])[0])
                 bundle = state.teams_bundle(season)
+                power = state.power_index(season)
+                rows = []
+                for t in bundle["table"]:
+                    row = team_summary_row(t)
+                    row["power"] = power["by_team"].get(norm_team(t["abbr"]))
+                    rows.append(row)
                 return self._send(
                     200,
                     _json_bytes(
@@ -201,7 +223,9 @@ def make_handler(state: DashboardState):
                             "live": bundle["live"],
                             "players": len(bundle["players"]),
                             "metrics": metric_specs(),
-                            "teams": [team_summary_row(t) for t in bundle["table"]],
+                            "teams": rows,
+                            "power_weeks": power["weeks"],
+                            "power_through_week": power["through_week"],
                             "ingest": state.ingestor.status(),
                         }
                     ),
@@ -212,12 +236,19 @@ def make_handler(state: DashboardState):
             if team_match:
                 season = state.teams_season((qs.get("season") or [None])[0])
                 bundle = state.teams_bundle(season)
-                team = bundle["by_abbr"].get(team_match.group(1).upper())
+                wanted = team_match.group(1).upper()
+                team = bundle["by_abbr"].get(wanted)
+                if not team:  # accept nflverse spellings (LA, WAS) for ESPN teams (LAR, WSH)
+                    team = next((t for t in bundle["by_abbr"].values() if norm_team(t["abbr"]) == norm_team(wanted)), None)
                 if not team:
                     return self._send(404, _json_bytes({"error": "team not found"}), "application/json")
                 detail = team_detail(team, bundle["games"], bundle["players"])
                 detail["season"] = season
                 detail["metrics"] = metric_specs()
+                power = state.power_index(season)
+                detail["power"] = power["by_team"].get(norm_team(team["abbr"]))
+                detail["power_weeks"] = power["weeks"]
+                detail["power_through_week"] = power["through_week"]
                 return self._send(200, _json_bytes(detail), "application/json")
 
             game_match = GAME_PATH_RE.match(path)
