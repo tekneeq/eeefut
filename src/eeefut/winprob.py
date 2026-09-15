@@ -296,7 +296,35 @@ def run_model(
         "games": predictions,
         "power_weeks": [w for w, _ in ranked_snapshots],
         "through_week": ranked_snapshots[-1][0] if ranked_snapshots else 0,
+        "rank_ladder": rank_ladder(table),
     }
+
+
+def rank_ladder(ratings: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One column per completed week (1…n): the team sitting at each rank 1–32.
+
+    Week 0 (preseason baseline) is omitted so the x-axis is the played schedule.
+    """
+    weeks = sorted(
+        {int(h["week"]) for r in ratings for h in r.get("history") or [] if int(h.get("week") or 0) > 0}
+    )
+    columns: list[dict[str, Any]] = []
+    for week in weeks:
+        by_rank: dict[int, dict[str, Any]] = {}
+        for row in ratings:
+            hit = next((h for h in (row.get("history") or []) if int(h.get("week") or 0) == week), None)
+            if not hit:
+                continue
+            rank = int(hit["rank"])
+            by_rank[rank] = {
+                "rank": rank,
+                "team": row["team"],
+                "name": row.get("name") or row["team"],
+                "logo": row.get("logo") or team_logo(row["team"]),
+                "power": hit.get("power"),
+            }
+        columns.append({"week": week, "ranks": [by_rank[i] for i in range(1, 33) if i in by_rank]})
+    return columns
 
 
 def _prediction(
@@ -539,6 +567,7 @@ def build_dashboard(model: dict[str, Any]) -> dict[str, Any]:
         "buckets": bucket_record(games),
         "team_buckets": team_bucket_records(games),
         "ratings": model["ratings"],
+        "rank_ladder": model.get("rank_ladder") or rank_ladder(model.get("ratings") or []),
         "generated_at": int(time.time()),
     }
 
