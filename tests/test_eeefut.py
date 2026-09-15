@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from eeefut.cache import cache_root, read_json, write_json
 from eeefut.data import (
     inject_chiefs_preset,
@@ -801,7 +803,15 @@ def test_dashboard_teams_api(tmp_path, monkeypatch):
             return {"sports": []}
         raise RuntimeError(url)
 
-    state = DashboardState("NFL:2025", live=LiveFeed(_fake_live_fetch([])), store=store, ingestor=Ingestor(store, fetch))
+    from eeefut.winprob import WinProbService
+
+    state = DashboardState(
+        "NFL:2025",
+        live=LiveFeed(_fake_live_fetch([])),
+        store=store,
+        ingestor=Ingestor(store, fetch),
+        winprob=WinProbService(rows=[]),
+    )
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(state))
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     try:
@@ -809,6 +819,7 @@ def test_dashboard_teams_api(tmp_path, monkeypatch):
         teams = json.loads(urllib.request.urlopen(base + "/api/teams", timeout=5).read())
         assert teams["season"] == 2026 and teams["completed"] == 1 and teams["players"] == 4
         assert {t["abbr"] for t in teams["teams"]} == {"HOM", "AWY"}
+        assert all(t["power"] is None for t in teams["teams"])  # synthetic teams have no rating
         assert teams["metrics"][0]["key"] == "points_pg"
 
         detail = json.loads(urllib.request.urlopen(base + "/api/teams/hom", timeout=5).read())
@@ -967,6 +978,127 @@ def test_winprob_service_caches_and_uses_store_results(tmp_path, monkeypatch):
     board2 = svc.get()
     assert board2["record"]["total"]["decided"] == 3
     assert board2["current_week"] == 2  # one week-2 game still pending
+
+
+def test_power_blend_helpers():
+    from eeefut.winprob import EloConfig, blended_margin, performance_margin, power_of
+
+    assert performance_margin(400, 300, 1, 2) == pytest.approx(100 / 15 + 4)
+    assert blended_margin(22, 12.9) == pytest.approx(0.7 * 22 + 0.3 * 12.9)
+    assert blended_margin(10, None) == 10.0
+    assert blended_margin(0, 15.0) == 0.0
+    assert blended_margin(3, -40.0) == 1.0  # a fluky win still counts as a win, barely
+    assert blended_margin(-3, 40.0) == -1.0
+    assert blended_margin(60, 60.0) == 35.0  # blowouts are capped
+    cfg = EloConfig()
+    assert power_of(cfg.mean, cfg) == 0.0
+    assert power_of(cfg.mean + cfg.points_per_elo * 7, cfg) == 7.0
+
+
+POWER_ROWS = _wp_rows(
+    "2025_01_BUF_KC,2025,REG,1,2025-09-07,Sunday,13:00,BUF,17,KC,27,Home,401,150,-180,4",
+    "2025_02_DEN_KC,2025,REG,2,2025-09-14,Sunday,13:00,DEN,10,KC,30,Home,402,200,-240,6",
+    "2025_03_DEN_BUF,2025,REG,3,2025-09-21,Sunday,13:00,DEN,20,BUF,24,Home,403,120,-140,2",
+    "2025_04_LV_DEN,2025,REG,4,2025-09-28,Sunday,13:00,LV,13,DEN,23,Home,404,180,-220,5",
+    # 2026: BUF@KC is only scored in the game store, DEN@LV is in the csv, week 2 is in the future
+    "2026_01_BUF_KC,2026,REG,1,2026-09-13,Sunday,16:25,BUF,,KC,,Home,501,140,-165,3",
+    "2026_01_DEN_LV,2026,REG,1,2026-09-13,Sunday,13:00,DEN,20,LV,17,Home,502,-130,110,-1.5",
+    "2026_02_KC_DEN,2026,REG,2,2026-09-20,Sunday,13:00,KC,,DEN,,Home,503,-200,170,-4",
+)
+
+
+def test_power_history_tracks_weekly_changes_and_blends_performance():
+    from eeefut.winprob import run_model
+
+    plain = run_model(POWER_ROWS, 2026, extra_results={"501": (27, 10)})
+    blended = run_model(POWER_ROWS, 2026, extra_results={"501": (27, 10)}, extra_perf={"501": -12.0})
+
+    assert plain["power_weeks"] == [0, 1] and plain["through_week"] == 1
+    ratings = {r["team"]: r for r in plain["ratings"]}
+    assert set(ratings) == {"KC", "BUF", "DEN", "LV"}
+    kc, buf = ratings["KC"], ratings["BUF"]
+    assert kc["rank"] == 1 and kc["power"] > buf["power"]
+    assert [h["week"] for h in kc["history"]] == [0, 1]
+    assert kc["history"][0]["rank"] == 1  # preseason baseline carried over from 2025
+    assert kc["power_delta"] > 0 and buf["power_delta"] < 0
+    assert kc["power_delta"] == pytest.approx(kc["power"] - kc["prev_power"], abs=0.11)
+    assert kc["rank_change"] == 0
+    assert sum(r["rank_change"] for r in plain["ratings"]) == 0
+    # LV lost as a home favourite, so it drops; DEN climbs
+    assert ratings["DEN"]["power_delta"] > 0 > ratings["LV"]["power_delta"]
+
+    g = {x["id"]: x for x in blended["games"]}["2026_01_BUF_KC"]
+    assert g["performance_margin"] == -12.0 and g["effective_margin"] == pytest.approx(0.7 * 17 - 0.3 * 12, abs=0.05)
+    assert g["home_shift"] > 0
+    # winning while being outgained still helps, but less than the raw 17-point margin would
+    plain_kc = next(r for r in plain["ratings"] if r["team"] == "KC")
+    blended_kc = next(r for r in blended["ratings"] if r["team"] == "KC")
+    assert 0 < blended_kc["power_delta"] < plain_kc["power_delta"]
+    future = {x["id"]: x for x in blended["games"]}["2026_02_KC_DEN"]
+    assert "effective_margin" not in future
+
+
+def test_store_performance_reads_box_scores(tmp_path, monkeypatch):
+    from eeefut.store import GameStore
+    from eeefut.winprob import store_performance, store_results
+
+    monkeypatch.setenv("EEEFUT_CACHE", str(tmp_path))
+    store = GameStore()
+    store.save_summary(_summary_fixture("501", ("1", "KC", 27), ("2", "BUF", 10)))
+    store.save_summary(_summary_fixture("777", ("3", "DEN", 7), ("4", "LV", 3), state="in"))
+    assert store_results(store, 2026) == {"501": (27, 10)}
+    perf = store_performance(store, 2026)
+    assert set(perf) == {"501"}
+    assert perf["501"] == pytest.approx(100 / 15 + 4, abs=0.01)
+
+
+def test_dashboard_teams_api_includes_power(tmp_path, monkeypatch):
+    import json
+    import threading
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    from eeefut.dashboard import DashboardState, make_handler
+    from eeefut.live import LiveFeed
+    from eeefut.store import GameStore
+    from eeefut.winprob import WinProbService, store_performance, store_results
+
+    monkeypatch.setenv("EEEFUT_CACHE", str(tmp_path))
+    save_season("NFL:2025", inject_chiefs_preset([], "NFL:2025"))
+    store = GameStore()
+    store.save_summary(_summary_fixture("501", ("1", "KC", 27), ("2", "BUF", 10)))
+    svc = WinProbService(
+        rows=POWER_ROWS,
+        results_provider=lambda yr: store_results(store, yr),
+        perf_provider=lambda yr: store_performance(store, yr),
+    )
+    state = DashboardState("NFL:2025", live=LiveFeed(_fake_live_fetch([])), store=store, winprob=svc)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(state))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        teams = json.loads(urllib.request.urlopen(base + "/api/teams", timeout=5).read())
+        assert teams["power_weeks"] == [0, 1] and teams["power_through_week"] == 1
+        rows = {t["abbr"]: t for t in teams["teams"]}
+        assert rows["KC"]["power"]["rank"] == 1 and rows["KC"]["power"]["power_delta"] > 0
+        assert rows["BUF"]["power"]["power_delta"] < 0 and len(rows["BUF"]["power"]["history"]) == 2
+
+        detail = json.loads(urllib.request.urlopen(base + "/api/teams/kc", timeout=5).read())
+        assert detail["power"]["power"] == rows["KC"]["power"]["power"]
+        assert [h["week"] for h in detail["power"]["history"]] == [0, 1]
+        assert detail["power_weeks"] == [0, 1]
+
+        board = json.loads(urllib.request.urlopen(base + "/api/winprob", timeout=5).read())
+        assert board["through_week"] == 1 and board["ratings"][0]["team"] == "KC"
+        assert board["ratings"][0]["power"] > 0 and "history" in board["ratings"][0]
+        game = next(g for g in board["games"] if g["id"] == "2026_01_BUF_KC")
+        assert game["performance_margin"] == 10.7  # rounded to a tenth for display
+
+        html = urllib.request.urlopen(base + "/", timeout=5).read().decode()
+        assert 'id="teamSort"' in html and 'data-sort="power"' in html
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
 
 
 def test_dashboard_winprob_api(tmp_path, monkeypatch):

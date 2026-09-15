@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterable
 from eeefut.cache import cache_root
 from eeefut.data import GAMES_URL, TEAM_NAMES, _fetch_text
 
-TEAM_ALIASES = {"OAK": "LV", "SD": "LAC", "STL": "LA"}
+TEAM_ALIASES = {"OAK": "LV", "SD": "LAC", "STL": "LA", "LAR": "LA", "WSH": "WAS", "JAC": "JAX"}
 ESPN_LOGO_SLUG = {"LA": "lar", "WAS": "wsh"}
 GAMES_CSV_TTL = 6 * 3600.0
 
@@ -118,26 +118,61 @@ def _sort_key(row: dict[str, str]) -> tuple:
     )
 
 
+def power_of(elo: float, config: EloConfig = EloConfig()) -> float:
+    """Power number: points better (+) or worse (-) than an average team on a neutral field."""
+    return round((elo - config.mean) / config.points_per_elo, 1)
+
+
+def performance_margin(
+    home_yards: float, away_yards: float, home_turnovers: float, away_turnovers: float, *, yards_per_point: float = 15.0, points_per_turnover: float = 4.0
+) -> float:
+    """Box-score view of the margin: yardage edge in points plus the turnover swing."""
+    return (home_yards - away_yards) / yards_per_point + (away_turnovers - home_turnovers) * points_per_turnover
+
+
+def blended_margin(mov: int, perf: float | None, *, weight: float = 0.3, cap: float = 35.0) -> float:
+    """Effective margin used for the rating update: mostly the score, partly how the game was played.
+
+    Keeps the sign of the actual result (a win is still a win) but a fluky win over a team
+    that outgained you shrinks toward the minimum, and a dominant win grows.
+    """
+    if perf is None or mov == 0:
+        return float(mov)
+    eff = (1 - weight) * mov + weight * perf
+    if (eff > 0) != (mov > 0):
+        eff = 1.0 if mov > 0 else -1.0
+    return max(-cap, min(cap, eff))
+
+
 def run_model(
     rows: Iterable[dict[str, str]],
     season: int,
     *,
     extra_results: dict[str, tuple[int, int]] | None = None,
+    extra_perf: dict[str, float] | None = None,
     config: EloConfig = EloConfig(),
 ) -> dict[str, Any]:
-    """Replay Elo over all rows; return ratings plus per-game predictions for `season`.
+    """Replay Elo over all rows; return ratings, weekly power history, and predictions for `season`.
 
     `extra_results` maps ESPN event id -> (home_score, away_score) for games nflverse has
-    not scored yet (e.g. pulled from the live GameStore).
+    not scored yet (e.g. pulled from the live GameStore). `extra_perf` maps ESPN event id
+    -> box-score performance margin (home minus away, in points) used to blend the update.
     """
     extra_results = extra_results or {}
+    extra_perf = extra_perf or {}
     ratings: dict[str, float] = {}
     last_season: int | None = None
     predictions: list[dict[str, Any]] = []
     records: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0])
+    snapshots: list[tuple[int, dict[str, float]]] = []  # (week, ratings after that week)
+    current_week: int | None = None
+    week_played = False
 
     def rating(team: str) -> float:
         return ratings.setdefault(team, config.mean)
+
+    def snapshot(week: int) -> None:
+        snapshots.append((week, {t: e for t, e in ratings.items() if t in TEAM_NAMES}))
 
     for row in sorted(rows, key=_sort_key):
         row_season = _int(row.get("season"))
@@ -146,22 +181,31 @@ def run_model(
         if last_season is not None and row_season != last_season:
             for team in list(ratings):
                 ratings[team] = config.mean + (ratings[team] - config.mean) * (1 - config.regress)
+        if row_season == season and last_season != season:
+            snapshot(0)  # preseason baseline after regression
         last_season = row_season
 
         home = norm_team(row.get("home_team", ""))
         away = norm_team(row.get("away_team", ""))
         if not home or not away:
             continue
+        row_week = _int(row.get("week")) or 0
+        if row_season == season and row_week != current_week:
+            if current_week is not None and week_played:
+                snapshot(current_week)
+            current_week, week_played = row_week, False
+
         neutral = str(row.get("location") or "").strip().lower() == "neutral"
         hfa = 0.0 if neutral else config.hfa
         home_elo, away_elo = rating(home), rating(away)
         diff = home_elo + hfa - away_elo
         p_home = elo_win_prob(diff)
 
+        espn_id = str(row.get("espn") or "")
         home_score = _int(row.get("home_score"))
         away_score = _int(row.get("away_score"))
         if home_score is None or away_score is None:
-            extra = extra_results.get(str(row.get("espn") or ""))
+            extra = extra_results.get(espn_id)
             if extra:
                 home_score, away_score = extra
         played = home_score is not None and away_score is not None
@@ -174,17 +218,24 @@ def run_model(
         if not played:
             continue
         mov = home_score - away_score
+        perf = extra_perf.get(espn_id)
+        eff = blended_margin(mov, perf)
         if mov > 0:
             outcome, winner_diff = 1.0, diff
         elif mov < 0:
             outcome, winner_diff = 0.0, -diff
         else:
             outcome, winner_diff = 0.5, 0.0
-        mult = math.log(abs(mov) + 1) * (2.2 / (winner_diff * 0.001 + 2.2))
+        mult = math.log(abs(eff) + 1) * (2.2 / (winner_diff * 0.001 + 2.2))
         shift = config.k * mult * (outcome - p_home)
         ratings[home] = home_elo + shift
         ratings[away] = away_elo - shift
         if row_season == season:
+            week_played = True
+            if predictions and predictions[-1]["id"] == row.get("game_id"):
+                predictions[-1]["performance_margin"] = None if perf is None else round(perf, 1)
+                predictions[-1]["effective_margin"] = round(eff, 1)
+                predictions[-1]["home_shift"] = round(shift / config.points_per_elo, 2)
             rec_home, rec_away = records[home], records[away]
             if mov > 0:
                 rec_home[0] += 1
@@ -196,17 +247,39 @@ def run_model(
                 rec_home[2] += 1
                 rec_away[2] += 1
 
+    if current_week is not None and week_played:
+        snapshot(current_week)
+    if not snapshots:
+        snapshot(0)
+
+    # Rank within each snapshot so history carries rank movement too.
+    ranked_snapshots: list[tuple[int, dict[str, tuple[float, int]]]] = []
+    for week, snap in snapshots:
+        order = sorted(snap.items(), key=lambda kv: -kv[1])
+        ranked_snapshots.append((week, {t: (e, i) for i, (t, e) in enumerate(order, start=1)}))
+
     table = []
     for team, elo in ratings.items():
         if team not in TEAM_NAMES:
             continue
         w, l, t = records.get(team, [0, 0, 0])
+        history = [
+            {"week": week, "elo": round(snap[team][0], 1), "power": power_of(snap[team][0], config), "rank": snap[team][1]}
+            for week, snap in ranked_snapshots
+            if team in snap
+        ]
+        prev = history[-2] if len(history) >= 2 else None
         table.append(
             {
                 "team": team,
                 "name": TEAM_NAMES.get(team, team),
                 "logo": team_logo(team),
                 "elo": round(elo, 1),
+                "power": power_of(elo, config),
+                "prev_power": prev["power"] if prev else None,
+                "power_delta": round(power_of(elo, config) - prev["power"], 1) if prev else None,
+                "prev_rank": prev["rank"] if prev else None,
+                "history": history,
                 "record": f"{w}-{l}" + (f"-{t}" if t else ""),
                 "wins": w,
                 "losses": l,
@@ -216,7 +289,14 @@ def run_model(
     table.sort(key=lambda r: -r["elo"])
     for i, r in enumerate(table, start=1):
         r["rank"] = i
-    return {"season": season, "ratings": table, "games": predictions}
+        r["rank_change"] = (r["prev_rank"] - i) if r["prev_rank"] else None
+    return {
+        "season": season,
+        "ratings": table,
+        "games": predictions,
+        "power_weeks": [w for w, _ in ranked_snapshots],
+        "through_week": ranked_snapshots[-1][0] if ranked_snapshots else 0,
+    }
 
 
 def _prediction(
@@ -444,9 +524,16 @@ def build_dashboard(model: dict[str, Any]) -> dict[str, Any]:
     weeks = sorted({g["week"] for g in games})
     return {
         "season": model["season"],
-        "model": {"name": "Elo + margin of victory", "hfa_points": round(EloConfig().hfa / EloConfig().points_per_elo, 1), "k": EloConfig().k},
+        "model": {
+            "name": "Elo + margin of victory",
+            "hfa_points": round(EloConfig().hfa / EloConfig().points_per_elo, 1),
+            "k": EloConfig().k,
+            "power_scale": "points vs. an average team on a neutral field",
+        },
         "weeks": weeks,
         "current_week": current_week(games),
+        "power_weeks": model.get("power_weeks", []),
+        "through_week": model.get("through_week", 0),
         "games": games,
         "record": weekly_record(games),
         "buckets": bucket_record(games),
@@ -464,11 +551,13 @@ class WinProbService:
         *,
         fetch_text: Callable[[str], str] = _fetch_text,
         results_provider: Callable[[int], dict[str, tuple[int, int]]] | None = None,
+        perf_provider: Callable[[int], dict[str, float]] | None = None,
         ttl: float = 300.0,
         rows: list[dict[str, str]] | None = None,
     ) -> None:
         self._fetch_text = fetch_text
         self._results_provider = results_provider
+        self._perf_provider = perf_provider
         self._ttl = ttl
         self._rows = rows
         self._lock = threading.Lock()
@@ -493,13 +582,14 @@ class WinProbService:
             self.refresh_rows()
         season = season or self.latest_season()
         extra = self._results_provider(season) if self._results_provider else {}
-        sig = tuple(sorted(extra.items()))
+        perf = self._perf_provider(season) if self._perf_provider else {}
+        sig = (tuple(sorted(extra.items())), tuple(sorted(perf.items())))
         now = time.time()
         with self._lock:
             hit = self._cache.get(season)
             if hit and not force and now - hit[0] < self._ttl and hit[1] == sig:
                 return hit[2]
-        model = run_model(self.rows(), season, extra_results=extra)
+        model = run_model(self.rows(), season, extra_results=extra, extra_perf=perf)
         board = build_dashboard(model)
         with self._lock:
             self._cache[season] = (now, sig, board)
@@ -516,4 +606,24 @@ def store_results(store: Any, season: int) -> dict[str, tuple[int, int]]:
     for g in games:
         if g.get("state") == "post":
             out[str(g["id"])] = (int(g["home"]["score"]), int(g["away"]["score"]))
+    return out
+
+
+def store_performance(store: Any, season: int) -> dict[str, float]:
+    """Box-score performance margin (home minus away, points) per finished game in the store."""
+    out: dict[str, float] = {}
+    try:
+        games = store.games(season)
+    except Exception:  # noqa: BLE001
+        return out
+    for g in games:
+        if g.get("state") != "post":
+            continue
+        ts = g.get("team_stats") or {}
+        hs, as_ = ts.get("home") or {}, ts.get("away") or {}
+        hy, ay = _float(hs.get("totalYards")), _float(as_.get("totalYards"))
+        if hy is None or ay is None:
+            continue
+        ht, at = _float(hs.get("turnovers")) or 0.0, _float(as_.get("turnovers")) or 0.0
+        out[str(g["id"])] = round(performance_margin(hy, ay, ht, at), 2)
     return out
