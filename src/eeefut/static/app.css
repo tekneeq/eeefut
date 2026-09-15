@@ -2147,6 +2147,13 @@ main {
   font-weight: 600;
 }
 
+.per {
+  font-size: 0.62em;
+  font-weight: 500;
+  color: var(--muted);
+  margin-left: 0.08em;
+}
+
 .power-badge {
   display: inline-flex;
   align-items: center;

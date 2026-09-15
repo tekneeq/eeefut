@@ -231,13 +231,22 @@ def _blended_ppg(points: float, yards: float, turnovers: float, games: float) ->
 
 
 def attach_side_power(table: list[dict[str, Any]]) -> None:
-    """Offense / defense power: points better (+) or worse (−) than a league-average unit.
+    """Offense / defense power on a 0–100 scale (50 = league-average unit).
 
-    Offense uses points scored + yardage/turnovers; defense uses the same numbers
-    allowed. Both are centered so the league mean is 0. Higher is better on defense
-    too (a +4 defense is four points stingier than average).
+    Raw values are a blended points-per-game edge (score + box score), then mapped
+    through the same Elo curve as overall power. Higher is better on defense too.
     """
-    empty = {"offense": None, "defense": None, "combined": None, "offense_rank": None, "defense_rank": None}
+    from eeefut.winprob import score_100
+
+    empty = {
+        "offense": None,
+        "defense": None,
+        "combined": None,
+        "offense_pts": None,
+        "defense_pts": None,
+        "offense_rank": None,
+        "defense_rank": None,
+    }
     played = [t for t in table if t["games"] > 0]
     for t in table:
         t["side_power"] = dict(empty)
@@ -256,9 +265,11 @@ def attach_side_power(table: list[dict[str, Any]]) -> None:
         off_p = round(off_raw[id(t)] - league, 1)
         def_p = round(league - def_raw[id(t)], 1)
         t["side_power"] = {
-            "offense": off_p,
-            "defense": def_p,
-            "combined": round(off_p + def_p, 1),
+            "offense": score_100(off_p),
+            "defense": score_100(def_p),
+            "combined": score_100(off_p + def_p),
+            "offense_pts": off_p,
+            "defense_pts": def_p,
             "offense_rank": None,
             "defense_rank": None,
         }
@@ -293,7 +304,15 @@ def _team_shell(block: dict[str, Any]) -> dict[str, Any]:
         "offense_totals": _empty_totals(),
         "defense_totals": _empty_totals(),
         "ranks": {"offense": {}, "defense": {}},
-        "side_power": {"offense": None, "defense": None, "combined": None, "offense_rank": None, "defense_rank": None},
+        "side_power": {
+            "offense": None,
+            "defense": None,
+            "combined": None,
+            "offense_pts": None,
+            "defense_pts": None,
+            "offense_rank": None,
+            "defense_rank": None,
+        },
         "game_ids": [],
         "live_game_id": None,
     }

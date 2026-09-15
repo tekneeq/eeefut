@@ -112,7 +112,19 @@ class DashboardState:
             board = self.winprob.get(season)
         except Exception:  # noqa: BLE001 - schedule download failure must not break the Teams tab
             return {"by_team": {}, "weeks": [], "through_week": 0, "ladder": []}
-        keys = ("power", "power_delta", "prev_power", "rank", "prev_rank", "rank_change", "elo", "history")
+        keys = (
+            "power",
+            "score",
+            "power_delta",
+            "score_delta",
+            "prev_power",
+            "prev_score",
+            "rank",
+            "prev_rank",
+            "rank_change",
+            "elo",
+            "history",
+        )
         return {
             "by_team": {r["team"]: {k: r.get(k) for k in keys} for r in board.get("ratings", [])},
             "weeks": board.get("power_weeks", []),

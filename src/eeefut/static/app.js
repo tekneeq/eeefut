@@ -590,6 +590,21 @@
     return `${n > 0 ? "+" : n < 0 ? "−" : ""}${Math.abs(n).toFixed(digits)}`;
   }
 
+  function score100(pts) {
+    if (pts === null || pts === undefined) return null;
+    return Math.round(1000 / (1 + 10 ** (-Number(pts) / 16))) / 10;
+  }
+
+  function histScore(h) {
+    if (!h) return null;
+    return h.score != null ? h.score : score100(h.power);
+  }
+
+  function fmtScore(n) {
+    if (n === null || n === undefined) return "–";
+    return `${Math.round(Number(n))}<span class="per">/100</span>`;
+  }
+
   function deltaHtml(delta, digits = 1, suffix = "") {
     if (delta === null || delta === undefined) return `<span class="delta flat">new</span>`;
     const n = Number(delta);
@@ -609,8 +624,8 @@
     return `
       <span class="power-badge" title="Overall power: points vs an average team · change since last week">
         <i class="rank ${rankClass(p.rank, 32)}">#${p.rank}</i>
-        <b>${signed(p.power)}</b>
-        ${deltaHtml(p.power_delta)}
+        <b>${fmtScore(p.score ?? score100(p.power))}</b>
+        ${deltaHtml(p.score_delta ?? p.power_delta)}
         ${rankChangeHtml(p.rank_change)}
       </span>`;
   }
@@ -620,7 +635,7 @@
     return `
       <span class="side-pill" title="${esc(title)}">
         <small>${esc(label)}</small>
-        <b>${empty ? "–" : signed(value)}</b>
+        <b>${empty ? "–" : fmtScore(value)}</b>
         ${empty || !rank ? "" : `<i class="rank ${rankClass(rank, 32)}">#${rank}</i>`}
       </span>`;
   }
@@ -631,29 +646,29 @@
     if (!p && s.offense == null && s.defense == null) return "";
     return `
       <div class="power-trio">
-        ${sidePill("OVR", p?.power, p?.rank, "Overall Elo power: points better or worse than an average team")}
-        ${sidePill("OFF", s.offense, s.offense_rank, "Offense power: scoring + box score vs a league-average offense")}
-        ${sidePill("DEF", s.defense, s.defense_rank, "Defense power: points and yards prevented vs a league-average defense")}
+        ${sidePill("OVR", p?.score ?? score100(p?.power), p?.rank, "Overall power out of 100 (50 = average team)")}
+        ${sidePill("OFF", s.offense, s.offense_rank, "Offense power out of 100 (50 = average offense)")}
+        ${sidePill("DEF", s.defense, s.defense_rank, "Defense power out of 100 (50 = average defense)")}
         ${p ? sparkline(p.history) : ""}
       </div>`;
   }
 
   function sparkline(history, width = 90, height = 26) {
     if (!history || history.length < 2) return "";
-    const vals = history.map((h) => h.power);
-    const min = Math.min(...vals, 0);
-    const max = Math.max(...vals, 0);
+    const vals = history.map(histScore);
+    const min = Math.min(...vals, 50);
+    const max = Math.max(...vals, 50);
     const span = max - min || 1;
     const x = (i) => (i / (history.length - 1)) * (width - 4) + 2;
     const y = (v) => height - 3 - ((v - min) / span) * (height - 6);
-    const pts = history.map((h, i) => `${x(i).toFixed(1)},${y(h.power).toFixed(1)}`).join(" ");
+    const pts = history.map((h, i) => `${x(i).toFixed(1)},${y(histScore(h)).toFixed(1)}`).join(" ");
     const last = history[history.length - 1];
-    const trend = last.power >= history[0].power ? "up" : "down";
+    const trend = histScore(last) >= histScore(history[0]) ? "up" : "down";
     return `
       <svg class="spark ${trend}" viewBox="0 0 ${width} ${height}" aria-hidden="true">
-        <line x1="0" x2="${width}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}" class="zero" />
+        <line x1="0" x2="${width}" y1="${y(50).toFixed(1)}" y2="${y(50).toFixed(1)}" class="zero" />
         <polyline points="${pts}" />
-        <circle cx="${x(history.length - 1).toFixed(1)}" cy="${y(last.power).toFixed(1)}" r="2" />
+        <circle cx="${x(history.length - 1).toFixed(1)}" cy="${y(histScore(last)).toFixed(1)}" r="2" />
       </svg>`;
   }
 
@@ -665,26 +680,21 @@
     const padR = 44;
     const padT = 18;
     const padB = 30;
-    const vals = history.map((h) => h.power);
-    let min = Math.min(...vals, 0);
-    let max = Math.max(...vals, 0);
-    const pad = Math.max(1, (max - min) * 0.15);
-    min -= pad;
-    max += pad;
-    const span = max - min || 1;
+    const vals = history.map(histScore);
+    const min = 0;
+    const max = 100;
+    const span = 100;
     const n = history.length;
     const x = (i) => padL + (n === 1 ? (W - padL - padR) / 2 : (i / (n - 1)) * (W - padL - padR));
     const y = (v) => padT + (1 - (v - min) / span) * (H - padT - padB);
-    const pts = history.map((h, i) => `${x(i).toFixed(1)},${y(h.power).toFixed(1)}`).join(" ");
-    const ticks = [];
-    const step = span > 12 ? 4 : span > 6 ? 2 : 1;
-    for (let v = Math.ceil(min / step) * step; v <= max; v += step) ticks.push(v);
+    const pts = history.map((h, i) => `${x(i).toFixed(1)},${y(histScore(h)).toFixed(1)}`).join(" ");
+    const ticks = [0, 25, 50, 75, 100];
     return `
-      <svg class="power-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Power rating by week">
+      <svg class="power-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Power rating out of 100 by week">
         ${ticks
           .map(
-            (v) => `<line x1="${padL}" x2="${W - padR}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" class="grid ${v === 0 ? "zero" : ""}" />
-                    <text x="${padL - 6}" y="${(y(v) + 3).toFixed(1)}" class="ylab">${v > 0 ? "+" : ""}${v}</text>`
+            (v) => `<line x1="${padL}" x2="${W - padR}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" class="grid ${v === 50 ? "zero" : ""}" />
+                    <text x="${padL - 6}" y="${(y(v) + 3).toFixed(1)}" class="ylab">${v}</text>`
           )
           .join("")}
         <polyline points="${pts}" class="line" style="stroke:${color}" />
@@ -692,14 +702,14 @@
           .map(
             (h, i) => `
           <g class="pt">
-            <circle cx="${x(i).toFixed(1)}" cy="${y(h.power).toFixed(1)}" r="4" style="fill:${color}" />
-            <text x="${x(i).toFixed(1)}" y="${(y(h.power) - 9).toFixed(1)}" class="vlab">${signed(h.power)}</text>
-            <text x="${x(i).toFixed(1)}" y="${(y(h.power) + 15).toFixed(1)}" class="rlab">#${h.rank}</text>
+            <circle cx="${x(i).toFixed(1)}" cy="${y(histScore(h)).toFixed(1)}" r="4" style="fill:${color}" />
+            <text x="${x(i).toFixed(1)}" y="${(y(histScore(h)) - 9).toFixed(1)}" class="vlab">${Math.round(histScore(h))}</text>
+            <text x="${x(i).toFixed(1)}" y="${(y(histScore(h)) + 15).toFixed(1)}" class="rlab">#${h.rank}</text>
             <text x="${x(i).toFixed(1)}" y="${H - 8}" class="xlab">${h.week === 0 ? "Pre" : `W${h.week}`}</text>
           </g>`
           )
           .join("")}
-        <text x="${W - padR + 8}" y="${(y(0) + 3).toFixed(1)}" class="ylab avg">avg</text>
+        <text x="${W - padR + 8}" y="${(y(50) + 3).toFixed(1)}" class="ylab avg">50</text>
       </svg>`;
   }
 
@@ -823,7 +833,7 @@
           const slot = col.ranks.find((s) => s.rank === rank);
           if (!slot) return `<span class="rank-cell empty"></span>`;
           return `
-            <button type="button" class="rank-cell" data-team="${esc(slot.team)}" title="${esc(slot.name)} · ${signed(slot.power)} · week ${col.week}" style="--team:${hex(slot.team)}">
+            <button type="button" class="rank-cell" data-team="${esc(slot.team)}" title="${esc(slot.name)} · ${slot.score != null ? `${Math.round(slot.score)}/100` : signed(slot.power)} · week ${col.week}" style="--team:${hex(slot.team)}">
               <b>${esc(slot.team)}</b> <span class="rn">${esc(slot.name)}</span>
             </button>`;
         })
@@ -985,7 +995,7 @@
     const hist = p?.history || [];
     const first = hist[0];
     const last = hist[hist.length - 1];
-    const season = first && last && hist.length > 1 ? last.power - first.power : null;
+    const season = first && last && hist.length > 1 ? histScore(last) - histScore(first) : null;
     const weekLabel = hist.length ? (last.week === 0 ? "preseason" : `through week ${last.week}`) : "";
     const weekRows = hist
       .slice()
@@ -995,8 +1005,8 @@
         return `
           <tr>
             <td>${h.week === 0 ? "Preseason" : `Week ${h.week}`}</td>
-            <td class="num">${signed(h.power)}</td>
-            <td class="num">${prev ? deltaHtml(h.power - prev.power) : `<span class="delta flat">–</span>`}</td>
+            <td class="num">${fmtScore(histScore(h))}</td>
+            <td class="num">${prev ? deltaHtml(histScore(h) - histScore(prev)) : `<span class="delta flat">–</span>`}</td>
             <td class="num">#${h.rank}</td>
             <td class="num">${prev ? rankChangeHtml(prev.rank - h.rank) : ""}</td>
           </tr>`;
@@ -1007,14 +1017,14 @@
         <div class="power-head">
           <div>
             <h3>Power rating</h3>
-            <p class="lede small">Overall is Elo (points vs an average team${weekLabel ? `, ${esc(weekLabel)}` : ""}). Offense and defense are the same unit from scoring and the box score — a +4 defense is four points stingier than average.</p>
+            <p class="lede small">All three numbers are out of 100 (50 = average)${weekLabel ? `, ${esc(weekLabel)}` : ""}. Overall is Elo; offense and defense come from scoring and the box score.</p>
           </div>
           <div class="power-kpis">
-            <span class="kpi"><b class="power-num">${p ? signed(p.power) : "–"}</b><small>overall</small></span>
-            <span class="kpi"><b>${s.offense == null ? "–" : signed(s.offense)}</b><small>offense ${s.offense_rank ? `#${s.offense_rank}` : ""}</small></span>
-            <span class="kpi"><b>${s.defense == null ? "–" : signed(s.defense)}</b><small>defense ${s.defense_rank ? `#${s.defense_rank}` : ""}</small></span>
+            <span class="kpi"><b class="power-num">${p ? fmtScore(p.score ?? score100(p.power)) : "–"}</b><small>overall</small></span>
+            <span class="kpi"><b>${s.offense == null ? "–" : fmtScore(s.offense)}</b><small>offense ${s.offense_rank ? `#${s.offense_rank}` : ""}</small></span>
+            <span class="kpi"><b>${s.defense == null ? "–" : fmtScore(s.defense)}</b><small>defense ${s.defense_rank ? `#${s.defense_rank}` : ""}</small></span>
             <span class="kpi"><b>${p ? `#${p.rank}` : "–"}</b><small>of 32 ${p ? rankChangeHtml(p.rank_change) : ""}</small></span>
-            <span class="kpi"><b>${deltaHtml(p.power_delta)}</b><small>vs last week</small></span>
+            <span class="kpi"><b>${p ? deltaHtml(p.score_delta ?? p.power_delta) : "–"}</b><small>vs last week</small></span>
             <span class="kpi"><b>${season === null ? "–" : deltaHtml(season)}</b><small>since preseason</small></span>
           </div>
         </div>
@@ -1460,11 +1470,11 @@
   function wpRatingsHtml(board) {
     const through = board.through_week ? `through week ${board.through_week}` : "preseason";
     return `
-      <p class="lede small">Power = points vs an average team, ${esc(through)}. Arrows show the change since last week; the sparkline is the season so far.</p>
+      <p class="lede small">Power is out of 100 (50 = average), ${esc(through)}. Arrows show the change since last week; the sparkline is the season so far.</p>
       <div class="rating-list">
         <div class="rating-row head">
           <span class="rk"></span><span></span><span class="rn">Team</span><span class="rr">Rec</span>
-          <span class="rp">Power</span><span class="rd">Δ wk</span><span class="rd">Rank</span><span class="rs"></span><span class="re">Elo</span>
+          <span class="rp">/100</span><span class="rd">Δ wk</span><span class="rd">Rank</span><span class="rs"></span><span class="re">Elo</span>
         </div>
         ${board.ratings
           .map(
@@ -1474,8 +1484,8 @@
             <img class="logo" src="${esc(r.logo)}" alt="" loading="lazy" />
             <span class="rn"><b>${esc(r.team)}</b> ${esc(r.name)}</span>
             <span class="rr">${esc(r.record)}</span>
-            <span class="rp">${signed(r.power)}</span>
-            <span class="rd">${deltaHtml(r.power_delta)}</span>
+            <span class="rp">${fmtScore(r.score ?? score100(r.power))}</span>
+            <span class="rd">${deltaHtml(r.score_delta ?? r.power_delta)}</span>
             <span class="rd">${rankChangeHtml(r.rank_change)}</span>
             <span class="rs">${sparkline(r.history, 70, 22)}</span>
             <span class="re">${r.elo}</span>
