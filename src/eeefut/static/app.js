@@ -799,7 +799,7 @@
           if (!slot) return `<span class="rank-cell empty"></span>`;
           return `
             <button type="button" class="rank-cell" data-team="${esc(slot.team)}" title="${esc(slot.name)} · ${signed(slot.power)} · week ${col.week}" style="--team:${hex(slot.team)}">
-              <b>${esc(slot.team)}</b><span class="rn">${esc(slot.name)}</span>
+              <b>${esc(slot.team)}</b> <span class="rn">${esc(slot.name)}</span>
             </button>`;
         })
         .join("");
