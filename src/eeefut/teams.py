@@ -217,6 +217,62 @@ def _rank(teams: list[dict[str, Any]], view: str, key: str, higher_better: bool)
         team["ranks"][view][key] = rank
 
 
+YARDS_PER_POINT = 15.0
+TURNOVER_POINTS = 4.0
+BOX_WEIGHT = 0.3
+
+
+def _blended_ppg(points: float, yards: float, turnovers: float, games: float) -> float | None:
+    """Score mixed with box-score value, per game — same blend as the Elo update."""
+    if not games:
+        return None
+    box = yards / YARDS_PER_POINT - TURNOVER_POINTS * turnovers
+    return ((1 - BOX_WEIGHT) * points + BOX_WEIGHT * box) / games
+
+
+def attach_side_power(table: list[dict[str, Any]]) -> None:
+    """Offense / defense power: points better (+) or worse (−) than a league-average unit.
+
+    Offense uses points scored + yardage/turnovers; defense uses the same numbers
+    allowed. Both are centered so the league mean is 0. Higher is better on defense
+    too (a +4 defense is four points stingier than average).
+    """
+    empty = {"offense": None, "defense": None, "combined": None, "offense_rank": None, "defense_rank": None}
+    played = [t for t in table if t["games"] > 0]
+    for t in table:
+        t["side_power"] = dict(empty)
+    if not played:
+        return
+
+    off_raw: dict[int, float] = {}
+    def_raw: dict[int, float] = {}
+    for t in played:
+        ot, dt = t["offense_totals"], t["defense_totals"]
+        off_raw[id(t)] = _blended_ppg(t["points_for"], ot["yards"], ot["turnovers"], t["games"]) or 0.0
+        def_raw[id(t)] = _blended_ppg(t["points_against"], dt["yards"], dt["turnovers"], t["games"]) or 0.0
+    league = (sum(off_raw.values()) + sum(def_raw.values())) / (2 * len(played))
+
+    for t in played:
+        off_p = round(off_raw[id(t)] - league, 1)
+        def_p = round(league - def_raw[id(t)], 1)
+        t["side_power"] = {
+            "offense": off_p,
+            "defense": def_p,
+            "combined": round(off_p + def_p, 1),
+            "offense_rank": None,
+            "defense_rank": None,
+        }
+
+    for key in ("offense", "defense"):
+        ranked = sorted(played, key=lambda t: (-(t["side_power"][key] if t["side_power"][key] is not None else -999), t["abbr"]))
+        rank, prev = 0, object()
+        for i, t in enumerate(ranked, start=1):
+            val = t["side_power"][key]
+            if val != prev:
+                rank, prev = i, val
+            t["side_power"][f"{key}_rank"] = rank
+
+
 def _team_shell(block: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": block.get("id", ""),
@@ -237,6 +293,7 @@ def _team_shell(block: dict[str, Any]) -> dict[str, Any]:
         "offense_totals": _empty_totals(),
         "defense_totals": _empty_totals(),
         "ranks": {"offense": {}, "defense": {}},
+        "side_power": {"offense": None, "defense": None, "combined": None, "offense_rank": None, "defense_rank": None},
         "game_ids": [],
         "live_game_id": None,
     }
@@ -278,6 +335,7 @@ def build_team_table(games: Iterable[dict[str, Any]], known_teams: Iterable[dict
         team["defense"] = _rates(team["defense_totals"])
         team["point_diff"] = team["points_for"] - team["points_against"]
 
+    attach_side_power(table)
     played = [t for t in table if t["games"] > 0]
     for key, _label, higher in METRICS:
         if higher is None:
@@ -481,6 +539,7 @@ def team_summary_row(team: dict[str, Any]) -> dict[str, Any]:
             "offense",
             "defense",
             "ranks",
+            "side_power",
             "live_game_id",
         )
     }

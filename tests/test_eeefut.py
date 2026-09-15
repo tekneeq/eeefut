@@ -722,6 +722,11 @@ def test_team_table_ranks_and_detail(tmp_path, monkeypatch):
     assert hom["ranks"]["offense"]["turnovers_pg"] == 1
     assert hom["ranks"]["defense"]["turnovers_pg"] == 1
     assert table[0]["abbr"] in ("HOM", "FOR")  # winners sort first
+    # Side power: HOM scored 27 on 400 yards / 1 TO; AWY 10 on 300 / 2 TO
+    assert hom["side_power"]["offense"] > 0 > by["AWY"]["side_power"]["offense"]
+    assert hom["side_power"]["defense"] > 0 > by["AWY"]["side_power"]["defense"]
+    assert hom["side_power"]["offense_rank"] == 1 and hom["side_power"]["defense_rank"] == 1
+    assert by["AWY"]["side_power"]["offense_rank"] == 4
 
     players = build_player_table(games, {"901p3": {"position": "CB"}})
     p3 = next(p for p in players if p["id"] == "901p3")
@@ -820,6 +825,9 @@ def test_dashboard_teams_api(tmp_path, monkeypatch):
         assert teams["season"] == 2026 and teams["completed"] == 1 and teams["players"] == 4
         assert {t["abbr"] for t in teams["teams"]} == {"HOM", "AWY"}
         assert all(t["power"] is None for t in teams["teams"])  # synthetic teams have no rating
+        hom = next(t for t in teams["teams"] if t["abbr"] == "HOM")
+        assert hom["side_power"]["offense"] > 0 and hom["side_power"]["defense"] > 0
+        assert hom["side_power"]["offense_rank"] == 1
         assert teams["metrics"][0]["key"] == "points_pg"
 
         detail = json.loads(urllib.request.urlopen(base + "/api/teams/hom", timeout=5).read())
