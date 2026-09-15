@@ -17,6 +17,7 @@
   state.teams = {
     board: null,
     filter: "",
+    sort: "power",
     detail: null,
     detailAbbr: null,
     openGame: null,
@@ -32,6 +33,7 @@
   const VALID_TABS = new Set(["matches", "live", "teams", "winprob", "similar"]);
 
   const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
   const esc = (value) =>
     String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
@@ -582,6 +584,102 @@
     }
   }
 
+  function signed(x, digits = 1) {
+    if (x === null || x === undefined) return "–";
+    const n = Number(x);
+    return `${n > 0 ? "+" : n < 0 ? "−" : ""}${Math.abs(n).toFixed(digits)}`;
+  }
+
+  function deltaHtml(delta, digits = 1, suffix = "") {
+    if (delta === null || delta === undefined) return `<span class="delta flat">new</span>`;
+    const n = Number(delta);
+    const cls = n > 0 ? "up" : n < 0 ? "down" : "flat";
+    const arrow = n > 0 ? "▲" : n < 0 ? "▼" : "•";
+    return `<span class="delta ${cls}">${arrow} ${Math.abs(n).toFixed(digits)}${suffix}</span>`;
+  }
+
+  function rankChangeHtml(change) {
+    if (change === null || change === undefined) return "";
+    if (change === 0) return `<span class="delta flat">=</span>`;
+    return `<span class="delta ${change > 0 ? "up" : "down"}">${change > 0 ? "▲" : "▼"}${Math.abs(change)}</span>`;
+  }
+
+  function powerBadge(p) {
+    if (!p) return "";
+    return `
+      <span class="power-badge" title="Power: points vs an average team · change since last week">
+        <i class="rank ${rankClass(p.rank, 32)}">#${p.rank}</i>
+        <b>${signed(p.power)}</b>
+        ${deltaHtml(p.power_delta)}
+        ${rankChangeHtml(p.rank_change)}
+      </span>`;
+  }
+
+  function sparkline(history, width = 90, height = 26) {
+    if (!history || history.length < 2) return "";
+    const vals = history.map((h) => h.power);
+    const min = Math.min(...vals, 0);
+    const max = Math.max(...vals, 0);
+    const span = max - min || 1;
+    const x = (i) => (i / (history.length - 1)) * (width - 4) + 2;
+    const y = (v) => height - 3 - ((v - min) / span) * (height - 6);
+    const pts = history.map((h, i) => `${x(i).toFixed(1)},${y(h.power).toFixed(1)}`).join(" ");
+    const last = history[history.length - 1];
+    const trend = last.power >= history[0].power ? "up" : "down";
+    return `
+      <svg class="spark ${trend}" viewBox="0 0 ${width} ${height}" aria-hidden="true">
+        <line x1="0" x2="${width}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}" class="zero" />
+        <polyline points="${pts}" />
+        <circle cx="${x(history.length - 1).toFixed(1)}" cy="${y(last.power).toFixed(1)}" r="2" />
+      </svg>`;
+  }
+
+  function powerChart(history, color) {
+    if (!history || !history.length) return `<p class="lede">No rating history yet.</p>`;
+    const W = 640;
+    const H = 220;
+    const padL = 36;
+    const padR = 44;
+    const padT = 18;
+    const padB = 30;
+    const vals = history.map((h) => h.power);
+    let min = Math.min(...vals, 0);
+    let max = Math.max(...vals, 0);
+    const pad = Math.max(1, (max - min) * 0.15);
+    min -= pad;
+    max += pad;
+    const span = max - min || 1;
+    const n = history.length;
+    const x = (i) => padL + (n === 1 ? (W - padL - padR) / 2 : (i / (n - 1)) * (W - padL - padR));
+    const y = (v) => padT + (1 - (v - min) / span) * (H - padT - padB);
+    const pts = history.map((h, i) => `${x(i).toFixed(1)},${y(h.power).toFixed(1)}`).join(" ");
+    const ticks = [];
+    const step = span > 12 ? 4 : span > 6 ? 2 : 1;
+    for (let v = Math.ceil(min / step) * step; v <= max; v += step) ticks.push(v);
+    return `
+      <svg class="power-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Power rating by week">
+        ${ticks
+          .map(
+            (v) => `<line x1="${padL}" x2="${W - padR}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" class="grid ${v === 0 ? "zero" : ""}" />
+                    <text x="${padL - 6}" y="${(y(v) + 3).toFixed(1)}" class="ylab">${v > 0 ? "+" : ""}${v}</text>`
+          )
+          .join("")}
+        <polyline points="${pts}" class="line" style="stroke:${color}" />
+        ${history
+          .map(
+            (h, i) => `
+          <g class="pt">
+            <circle cx="${x(i).toFixed(1)}" cy="${y(h.power).toFixed(1)}" r="4" style="fill:${color}" />
+            <text x="${x(i).toFixed(1)}" y="${(y(h.power) - 9).toFixed(1)}" class="vlab">${signed(h.power)}</text>
+            <text x="${x(i).toFixed(1)}" y="${(y(h.power) + 15).toFixed(1)}" class="rlab">#${h.rank}</text>
+            <text x="${x(i).toFixed(1)}" y="${H - 8}" class="xlab">${h.week === 0 ? "Pre" : `W${h.week}`}</text>
+          </g>`
+          )
+          .join("")}
+        <text x="${W - padR + 8}" y="${(y(0) + 3).toFixed(1)}" class="ylab avg">avg</text>
+      </svg>`;
+  }
+
   function teamChiclet(t, total) {
     const offRank = t.ranks?.offense?.yards_pg;
     const defRank = t.ranks?.defense?.yards_pg;
@@ -599,6 +697,7 @@
           ${live}
           <span class="rec-big">${esc(t.record)}</span>
         </header>
+        ${t.power ? `<div class="power-line">${powerBadge(t.power)}${sparkline(t.power.history)}</div>` : ""}
         ${
           t.games
             ? `<div class="team-kpis">
@@ -630,11 +729,20 @@
     const bits = [`${board.season}`, `${board.completed} games stored`, `${board.players} players`];
     if (board.live) bits.push(`${board.live} live`);
     if (board.ingest?.running) bits.push(`syncing ${board.ingest.message}`);
-    meta.textContent = bits.join(" · ");
     $("#teamsSync").disabled = Boolean(board.ingest?.running);
 
     const q = state.teams.filter.trim().toLowerCase();
     const teams = (board.teams || []).filter((t) => !q || `${t.abbr} ${t.name} ${t.full_name}`.toLowerCase().includes(q));
+    const winPct = (t) => (t.games ? (t.wins + 0.5 * (t.ties || 0)) / t.games : 0);
+    const sorters = {
+      power: (a, b) => (a.power?.rank ?? 99) - (b.power?.rank ?? 99) || winPct(b) - winPct(a),
+      record: (a, b) => winPct(b) - winPct(a) || b.point_diff - a.point_diff,
+      movers: (a, b) => Math.abs(b.power?.power_delta ?? 0) - Math.abs(a.power?.power_delta ?? 0),
+    };
+    teams.sort(sorters[state.teams.sort] || sorters.power);
+    $$("#teamSort .chip").forEach((c) => c.classList.toggle("active", c.dataset.sort === state.teams.sort));
+    if (board.power_through_week) bits.push(`power through W${board.power_through_week}`);
+    meta.textContent = bits.join(" · ");
     const total = (board.teams || []).filter((t) => t.games > 0).length || 32;
     if (!teams.length) {
       grid.innerHTML = `<p class="lede">${board.teams?.length ? "No team matches that filter." : "No games stored yet — hit Sync games."}</p>`;
@@ -764,6 +872,55 @@
       </div>`;
   }
 
+  function powerCard(d, color) {
+    const p = d.power;
+    if (!p) return "";
+    const hist = p.history || [];
+    const first = hist[0];
+    const last = hist[hist.length - 1];
+    const season = first && last && hist.length > 1 ? last.power - first.power : null;
+    const weekLabel = p.history?.length ? (last.week === 0 ? "preseason" : `through week ${last.week}`) : "";
+    const weekRows = hist
+      .slice()
+      .reverse()
+      .map((h, i, arr) => {
+        const prev = arr[i + 1];
+        return `
+          <tr>
+            <td>${h.week === 0 ? "Preseason" : `Week ${h.week}`}</td>
+            <td class="num">${signed(h.power)}</td>
+            <td class="num">${prev ? deltaHtml(h.power - prev.power) : `<span class="delta flat">–</span>`}</td>
+            <td class="num">#${h.rank}</td>
+            <td class="num">${prev ? rankChangeHtml(prev.rank - h.rank) : ""}</td>
+          </tr>`;
+      })
+      .join("");
+    return `
+      <section class="card power-card">
+        <div class="power-head">
+          <div>
+            <h3>Power rating</h3>
+            <p class="lede small">Points vs an average team on a neutral field, ${esc(weekLabel)}. Updated after each week's games from the result and the box score.</p>
+          </div>
+          <div class="power-kpis">
+            <span class="kpi"><b class="power-num">${signed(p.power)}</b><small>power</small></span>
+            <span class="kpi"><b>#${p.rank}</b><small>of 32 ${rankChangeHtml(p.rank_change)}</small></span>
+            <span class="kpi"><b>${deltaHtml(p.power_delta)}</b><small>vs last week</small></span>
+            <span class="kpi"><b>${season === null ? "–" : deltaHtml(season)}</b><small>since preseason</small></span>
+            <span class="kpi"><b>${p.elo}</b><small>Elo</small></span>
+          </div>
+        </div>
+        ${powerChart(hist, color)}
+        <details class="power-table">
+          <summary>Week-by-week</summary>
+          <table>
+            <thead><tr><th>Week</th><th class="num">Power</th><th class="num">Δ</th><th class="num">Rank</th><th class="num">Δ</th></tr></thead>
+            <tbody>${weekRows}</tbody>
+          </table>
+        </details>
+      </section>`;
+  }
+
   function renderTeamDetail() {
     const d = state.teams.detail;
     const box = $("#teamDetail");
@@ -790,6 +947,8 @@
           </div>
         </div>
       </div>
+
+      ${powerCard(d, color)}
 
       <div class="detail-grid">
         <section class="card">
@@ -1140,18 +1299,28 @@
   }
 
   function wpRatingsHtml(board) {
+    const through = board.through_week ? `through week ${board.through_week}` : "preseason";
     return `
+      <p class="lede small">Power = points vs an average team, ${esc(through)}. Arrows show the change since last week; the sparkline is the season so far.</p>
       <div class="rating-list">
+        <div class="rating-row head">
+          <span class="rk"></span><span></span><span class="rn">Team</span><span class="rr">Rec</span>
+          <span class="rp">Power</span><span class="rd">Δ wk</span><span class="rd">Rank</span><span class="rs"></span><span class="re">Elo</span>
+        </div>
         ${board.ratings
           .map(
             (r) => `
-          <div class="rating-row">
+          <button type="button" class="rating-row" data-team="${esc(r.team)}" title="Open ${esc(r.name)} in Teams">
             <span class="rk">#${r.rank}</span>
             <img class="logo" src="${esc(r.logo)}" alt="" loading="lazy" />
             <span class="rn"><b>${esc(r.team)}</b> ${esc(r.name)}</span>
             <span class="rr">${esc(r.record)}</span>
+            <span class="rp">${signed(r.power)}</span>
+            <span class="rd">${deltaHtml(r.power_delta)}</span>
+            <span class="rd">${rankChangeHtml(r.rank_change)}</span>
+            <span class="rs">${sparkline(r.history, 70, 22)}</span>
             <span class="re">${r.elo}</span>
-          </div>`
+          </button>`
           )
           .join("")}
       </div>`;
@@ -1181,6 +1350,13 @@
   }
 
   function onWinProbClick(ev) {
+    const team = ev.target.closest("button[data-team]");
+    if (team) {
+      location.hash = `#teams/${team.dataset.team}`;
+      switchTab("teams");
+      loadTeamDetail(team.dataset.team);
+      return;
+    }
     const btn = ev.target.closest("button[data-week]");
     if (!btn) return;
     state.wp.week = Number(btn.dataset.week);
@@ -1223,6 +1399,12 @@
     $("#teamsSync").addEventListener("click", syncTeams);
     $("#teamFilter").addEventListener("input", (ev) => {
       state.teams.filter = ev.target.value || "";
+      renderTeams();
+    });
+    $("#teamSort").addEventListener("click", (ev) => {
+      const chip = ev.target.closest(".chip[data-sort]");
+      if (!chip) return;
+      state.teams.sort = chip.dataset.sort;
       renderTeams();
     });
     window.addEventListener("hashchange", () => {

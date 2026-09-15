@@ -1793,20 +1793,261 @@ main {
   color: var(--muted);
 }
 
+/* ---- power ratings ---- */
+.delta {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  white-space: nowrap;
+}
+
+.delta.up {
+  color: var(--accent);
+}
+
+.delta.down {
+  color: var(--danger);
+}
+
+.delta.flat {
+  color: var(--muted);
+}
+
+.power-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: -0.15rem 0 0.35rem;
+}
+
+.power-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+.power-badge b {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.spark {
+  width: 90px;
+  height: 26px;
+  flex: none;
+}
+
+.spark polyline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.spark circle {
+  fill: var(--accent);
+}
+
+.spark.down polyline {
+  stroke: var(--danger);
+}
+
+.spark.down circle {
+  fill: var(--danger);
+}
+
+.spark .zero {
+  stroke: rgba(255, 255, 255, 0.14);
+  stroke-dasharray: 2 3;
+}
+
+.power-card {
+  margin-bottom: 1rem;
+}
+
+.power-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.power-head h3 {
+  margin-bottom: 0.15rem;
+}
+
+.lede.small {
+  font-size: 0.78rem;
+  margin: 0;
+}
+
+.power-kpis {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.power-kpis .kpi b {
+  font-size: 1.05rem;
+}
+
+.power-kpis .kpi .power-num {
+  font-size: 1.6rem;
+  color: var(--accent);
+}
+
+.power-kpis .kpi .delta {
+  font-size: 0.9rem;
+}
+
+.power-kpis .kpi small .delta {
+  font-size: 0.6rem;
+}
+
+.power-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+  margin: 0.25rem 0 0.5rem;
+}
+
+.power-chart .grid {
+  stroke: rgba(255, 255, 255, 0.06);
+}
+
+.power-chart .grid.zero {
+  stroke: rgba(255, 255, 255, 0.22);
+  stroke-dasharray: 4 4;
+}
+
+.power-chart .line {
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.power-chart circle {
+  stroke: var(--bg1);
+  stroke-width: 2;
+}
+
+.power-chart text {
+  font-family: var(--mono);
+  fill: var(--muted);
+  font-size: 10px;
+  text-anchor: middle;
+}
+
+.power-chart .ylab {
+  text-anchor: end;
+}
+
+.power-chart .ylab.avg {
+  text-anchor: start;
+}
+
+.power-chart .vlab {
+  fill: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.power-chart .rlab {
+  font-size: 9px;
+}
+
+.power-table summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.power-table table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+  font-size: 0.78rem;
+  font-family: var(--mono);
+}
+
+.power-table th,
+.power-table td {
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  text-align: left;
+}
+
+.power-table th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.power-table .num {
+  text-align: right;
+}
+
 .rating-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-  gap: 0.15rem 1.5rem;
+  grid-template-columns: 1fr;
+  gap: 0.1rem;
 }
 
 .rating-row {
   display: grid;
-  grid-template-columns: 2rem 1.3rem 1fr 3rem 3.6rem;
-  gap: 0.4rem;
+  grid-template-columns: 2rem 1.3rem 1fr 3rem 3.2rem 3.6rem 2.6rem 4.6rem 3.4rem;
+  gap: 0.5rem;
   align-items: center;
-  padding: 0.25rem 0;
+  padding: 0.25rem 0.35rem;
+  border: 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  background: transparent;
+  color: inherit;
+  font: inherit;
   font-size: 0.76rem;
+  text-align: left;
+  width: 100%;
+  border-radius: 6px;
+}
+
+button.rating-row {
+  cursor: pointer;
+}
+
+button.rating-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.rating-row.head {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.rating-row .rp {
+  font-family: var(--mono);
+  font-weight: 600;
+  text-align: right;
+}
+
+.rating-row .rd {
+  text-align: right;
+}
+
+.rating-row .rs .spark {
+  width: 70px;
+  height: 22px;
 }
 
 .rating-row .logo {
@@ -1840,6 +2081,13 @@ main {
   }
   .bk-split {
     text-align: left;
+  }
+  .rating-row {
+    grid-template-columns: 1.8rem 1.3rem 1fr 3rem 3.2rem 3rem 2.4rem;
+  }
+  .rating-row .rs,
+  .rating-row .re {
+    display: none;
   }
 }
 

@@ -78,8 +78,9 @@
         <div class="panel-head">
           <h1>Teams</h1>
           <p class="lede">
-            Offense and defense metrics with league ranks, built from every stored drive and play. Click a team for
-            tendencies, top players, and drive-by-drive game logs.
+            Ordered by power number — points better or worse than an average team, re-rated after every week's games
+            from the score and how the game was played (yardage and turnover margin). Click a team for the weekly
+            power history, offense and defense ranks, tendencies, top players, and drive-by-drive game logs.
           </p>
         </div>
         <div class="toolbar live-toolbar" id="teamsToolbar">
@@ -87,6 +88,11 @@
             <span>Filter</span>
             <input id="teamFilter" type="search" placeholder="KC, Ravens…" autocomplete="off" />
           </label>
+          <div class="chip-group" id="teamSort" role="group" aria-label="Order teams by">
+            <button type="button" class="chip active" data-sort="power">Power</button>
+            <button type="button" class="chip" data-sort="record">Record</button>
+            <button type="button" class="chip" data-sort="movers">Movers</button>
+          </div>
           <div class="live-status">
             <span id="teamsMeta" class="live-meta">Loading…</span>
             <button type="button" class="refresh" id="teamsSync" title="Fetch completed games from ESPN">Sync games</button>
@@ -122,7 +128,7 @@
           <div id="wpTeamBuckets"></div>
         </details>
         <details class="card wp-more" id="wpRatings">
-          <summary>Power ratings (Elo)</summary>
+          <summary>Power ratings — weekly movement</summary>
           <div id="wpRatingList"></div>
         </details>
       </section>
