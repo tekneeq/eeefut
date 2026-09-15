@@ -1037,6 +1037,14 @@ def test_power_history_tracks_weekly_changes_and_blends_performance():
     future = {x["id"]: x for x in blended["games"]}["2026_02_KC_DEN"]
     assert "effective_margin" not in future
 
+    from eeefut.winprob import rank_ladder
+
+    ladder = rank_ladder(plain["ratings"])
+    assert [c["week"] for c in ladder] == [1]  # preseason omitted from the x-axis
+    names = [s["team"] for s in ladder[0]["ranks"]]
+    assert names[0] == "KC" and set(names) == {"KC", "BUF", "DEN", "LV"}
+    assert [s["rank"] for s in ladder[0]["ranks"]] == [1, 2, 3, 4]
+
 
 def test_store_performance_reads_box_scores(tmp_path, monkeypatch):
     from eeefut.store import GameStore
@@ -1079,6 +1087,7 @@ def test_dashboard_teams_api_includes_power(tmp_path, monkeypatch):
         base = f"http://127.0.0.1:{httpd.server_address[1]}"
         teams = json.loads(urllib.request.urlopen(base + "/api/teams", timeout=5).read())
         assert teams["power_weeks"] == [0, 1] and teams["power_through_week"] == 1
+        assert teams["power_ladder"][0]["week"] == 1 and teams["power_ladder"][0]["ranks"][0]["team"] == "KC"
         rows = {t["abbr"]: t for t in teams["teams"]}
         assert rows["KC"]["power"]["rank"] == 1 and rows["KC"]["power"]["power_delta"] > 0
         assert rows["BUF"]["power"]["power_delta"] < 0 and len(rows["BUF"]["power"]["history"]) == 2
@@ -1095,7 +1104,7 @@ def test_dashboard_teams_api_includes_power(tmp_path, monkeypatch):
         assert game["performance_margin"] == 10.7  # rounded to a tenth for display
 
         html = urllib.request.urlopen(base + "/", timeout=5).read().decode()
-        assert 'id="teamSort"' in html and 'data-sort="power"' in html
+        assert 'id="teamSort"' in html and 'id="teamsRankChart"' in html and 'id="wpWeekChart"' in html
     finally:
         httpd.shutdown()
         httpd.server_close()
@@ -1125,6 +1134,9 @@ def test_dashboard_winprob_api(tmp_path, monkeypatch):
         board = json.loads(urllib.request.urlopen(base + "/api/winprob", timeout=5).read())
         assert board["season"] == 2026 and board["current_week"] == 2
         assert board["record"]["total"]["record"] == "2-0"
+        week1 = next(w for w in board["record"]["weekly"] if w["week"] == 1)
+        assert week1["correct"] == 2 and week1["decided"] == 2
+        assert board["rank_ladder"] == []  # synthetic A/B/C teams are not NFL abbrs
         assert len(board["games"]) == 4 and len(board["buckets"]) == 5
         pending = [g for g in board["games"] if not g["played"]]
         assert all(0 < g["home_prob"] < 1 and g["favorite_margin"] >= 0 for g in pending)

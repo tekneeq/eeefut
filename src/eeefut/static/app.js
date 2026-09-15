@@ -719,11 +719,13 @@
     const board = state.teams.board;
     if (!board) {
       grid.innerHTML = `<p class="lede">Loading…</p>`;
+      renderRankChart(null, true);
       return;
     }
     if (board.error) {
       grid.innerHTML = `<p class="lede">Teams unavailable — ${esc(board.error)}</p>`;
       meta.textContent = "Offline";
+      renderRankChart(board, true);
       return;
     }
     const bits = [`${board.season}`, `${board.completed} games stored`, `${board.players} players`];
@@ -753,6 +755,85 @@
     grid.hidden = showDetail;
     $("#teamsToolbar").hidden = showDetail;
     $("#teamDetail").hidden = !showDetail;
+    renderRankChart(board, showDetail);
+  }
+
+  function weekLabel(week) {
+    return week === 0 ? "Pre" : `Week ${week}`;
+  }
+
+  function rankChartHtml(board) {
+    const cols = (board.power_ladder || []).filter((c) => c.week > 0 && (c.ranks || []).length);
+    if (!cols.length) {
+      return `<h3>Rank by week</h3><p class="lede small">Rankings 1–32 appear here after week 1 is in the books.</p>`;
+    }
+    const nWeeks = cols.length;
+    const nRanks = Math.max(1, ...cols.map((c) => c.ranks.reduce((m, s) => Math.max(m, s.rank), 0)));
+    const colors = {};
+    for (const t of board.teams || []) {
+      if (t.color) colors[t.abbr] = `#${t.color}`;
+    }
+    const hex = (abbr) => colors[abbr] || teamHex(abbr);
+    const byTeam = {};
+    cols.forEach((col, wi) => {
+      for (const slot of col.ranks) {
+        (byTeam[slot.team] ||= []).push({ wi, rank: slot.rank });
+      }
+    });
+    const x = (wi) => ((wi + 0.5) / nWeeks) * 100;
+    const y = (rank) => ((rank - 0.5) / nRanks) * 100;
+    const bumps = Object.entries(byTeam)
+      .map(([team, pts]) => {
+        if (pts.length < 2) return "";
+        const d = pts.map((p, i) => `${i ? "L" : "M"}${x(p.wi).toFixed(2)},${y(p.rank).toFixed(2)}`).join(" ");
+        return `<path class="bump" data-team="${esc(team)}" d="${d}" style="stroke:${hex(team)}" />`;
+      })
+      .join("");
+    const yTicks =
+      nRanks <= 8 ? Array.from({ length: nRanks }, (_, i) => i + 1) : [1, 4, 8, 12, 16, 20, 24, 28, 32].filter((r) => r <= nRanks);
+    const rows = Array.from({ length: nRanks }, (_, i) => {
+      const rank = i + 1;
+      const cells = cols
+        .map((col) => {
+          const slot = col.ranks.find((s) => s.rank === rank);
+          if (!slot) return `<span class="rank-cell empty"></span>`;
+          return `
+            <button type="button" class="rank-cell" data-team="${esc(slot.team)}" title="${esc(slot.name)} · ${signed(slot.power)} · week ${col.week}" style="--team:${hex(slot.team)}">
+              <b>${esc(slot.team)}</b> <span class="rn">${esc(slot.name)}</span>
+            </button>`;
+        })
+        .join("");
+      return `<li class="rank-row"><span class="rank-y">${rank}</span>${cells}</li>`;
+    }).join("");
+    return `
+      <div class="rank-chart-head">
+        <h3>Rank by week</h3>
+        <p class="lede small">X is the week. Y is league rank (1 at the top through ${nRanks}). The name at each rank is who sat there after that week's games.</p>
+      </div>
+      <div class="rank-chart" style="--weeks:${nWeeks};--ranks:${nRanks}" data-weeks="${nWeeks}">
+        <div class="rank-x">
+          <span class="rank-y-lab">Rank</span>
+          ${cols.map((c) => `<span>${esc(weekLabel(c.week))}</span>`).join("")}
+        </div>
+        <div class="rank-body">
+          <svg class="rank-bumps" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+            ${yTicks.map((r) => `<line class="grid ${r === 1 ? "top" : ""}" x1="0" x2="100" y1="${y(r).toFixed(2)}" y2="${y(r).toFixed(2)}" />`).join("")}
+            ${bumps}
+          </svg>
+          <ol class="rank-rows">${rows}</ol>
+        </div>
+      </div>`;
+  }
+
+  function renderRankChart(board, hide) {
+    const box = $("#teamsRankChart");
+    if (!box) return;
+    if (hide || !board || board.error) {
+      box.hidden = true;
+      return;
+    }
+    box.hidden = false;
+    box.innerHTML = rankChartHtml(board);
   }
 
   async function loadTeamDetail(abbr, scroll = true) {
@@ -1085,6 +1166,11 @@
   }
 
   function onTeamsClick(ev) {
+    const ladder = ev.target.closest(".rank-cell[data-team]");
+    if (ladder) {
+      loadTeamDetail(ladder.dataset.team);
+      return;
+    }
     const chip = ev.target.closest(".team-chiclet");
     if (chip) {
       loadTeamDetail(chip.dataset.abbr);
@@ -1112,9 +1198,9 @@
   const TEAM_COLORS = {
     ARI: "97233f", ATL: "a71930", BAL: "241773", BUF: "00338d", CAR: "0085ca", CHI: "0b162a", CIN: "fb4f14",
     CLE: "311d00", DAL: "003594", DEN: "fb4f14", DET: "0076b6", GB: "203731", HOU: "03202f", IND: "002c5f",
-    JAX: "006778", KC: "e31837", LA: "003594", LAC: "0080c6", LV: "a5acaf", MIA: "008e97", MIN: "4f2683",
+    JAX: "006778", KC: "e31837",     LA: "003594", LAR: "003594", LAC: "0080c6", LV: "a5acaf", MIA: "008e97", MIN: "4f2683",
     NE: "002244", NO: "d3bc8d", NYG: "0b2265", NYJ: "125740", PHI: "004c54", PIT: "ffb612", SEA: "69be28",
-    SF: "aa0000", TB: "d50a0a", TEN: "4b92db", WAS: "5a1414",
+    SF: "aa0000", TB: "d50a0a", TEN: "4b92db", WAS: "5a1414", WSH: "5a1414",
   };
   const teamHex = (abbr) => `#${TEAM_COLORS[abbr] || "555555"}`;
 
@@ -1209,6 +1295,51 @@
           }
         </div>
       </article>`;
+  }
+
+  function wpAccuracyHtml(board) {
+    const weeks = board.record?.weekly || [];
+    if (!weeks.length) {
+      return `<h3>Right by week</h3><p class="lede small">Weekly hit counts show up once games finish.</p>`;
+    }
+    const maxY = Math.max(16, ...weeks.map((w) => Math.max(w.decided || 0, w.games || 0)));
+    const step = maxY <= 8 ? 2 : 4;
+    const ticks = [];
+    for (let v = maxY; v >= 0; v -= step) ticks.push(v);
+    const cols = weeks
+      .map((w) => {
+        const decided = w.decided || 0;
+        const correct = w.correct || 0;
+        const cls = !decided ? "pending" : w.pct >= 60 ? "good" : w.pct < 50 ? "bad" : "mid";
+        const active = w.week === state.wp.week ? "active" : "";
+        const label = decided ? `${correct} / ${decided}` : "";
+        const tip = decided ? `${correct} / ${decided}${w.pct != null ? ` · ${w.pct}%` : ""}` : w.pending ? `${w.pending} still to play` : "no games";
+        const stackH = decided ? (decided / maxY) * 100 : 0;
+        const hitH = decided ? (correct / decided) * 100 : 0;
+        const shortX = weeks.length > 6;
+        return `
+          <button type="button" class="wp-acc-col ${cls} ${active}" data-week="${w.week}" title="Week ${w.week}: ${tip}">
+            <span class="wp-acc-label">${esc(label)}</span>
+            <span class="wp-acc-stack" style="height:${stackH}%">
+              <i class="miss"></i>
+              <i class="hit" style="height:${hitH}%"></i>
+            </span>
+            <span class="wp-acc-x">${esc(shortX ? `W${w.week}` : weekLabel(w.week))}</span>
+          </button>`;
+      })
+      .join("");
+    return `
+      <div class="wp-acc-head">
+        <h3>Right by week</h3>
+        <p class="lede small">X is the week. Each bar is how many picks the model got right out of the games that finished — 10 / 15 means 10 correct of 15 decided. Click a bar to open that week.</p>
+      </div>
+      <div class="wp-acc" style="--max:${maxY}">
+        <div class="wp-acc-y" aria-hidden="true">${ticks.map((v) => `<span>${v}</span>`).join("")}</div>
+        <div class="wp-acc-plot">
+          <div class="wp-acc-grid">${ticks.map((v) => `<i style="--v:${v}"></i>`).join("")}</div>
+          <div class="wp-acc-bars">${cols}</div>
+        </div>
+      </div>`;
   }
 
   function wpRecordHtml(board) {
@@ -1332,11 +1463,15 @@
     if (!board) {
       $("#wpGames").innerHTML = `<p class="lede">${state.wp.error ? `Model unavailable — ${esc(state.wp.error)}` : "Loading…"}</p>`;
       meta.textContent = state.wp.error ? "Offline" : "Loading…";
+      $("#wpWeekChart").hidden = true;
       return;
     }
     const t = board.record.total;
     meta.textContent = `${board.season} · ${board.model.name} · HFA ${board.model.hfa_points} pts · ${t.record} (${pct(t.pct, 1)}) · ${board.games.length} games`;
     $("#wpRecord").innerHTML = wpRecordHtml(board);
+    const acc = $("#wpWeekChart");
+    acc.hidden = false;
+    acc.innerHTML = wpAccuracyHtml(board);
     $("#wpBuckets").innerHTML = wpBucketsHtml(board);
     $("#wpWeeks").innerHTML = board.weeks
       .map((w) => `<button type="button" class="chip ${w === state.wp.week ? "active" : ""}" data-week="${w}">W${w}</button>`)
@@ -1357,9 +1492,9 @@
       loadTeamDetail(team.dataset.team);
       return;
     }
-    const btn = ev.target.closest("button[data-week]");
-    if (!btn) return;
-    state.wp.week = Number(btn.dataset.week);
+    const wk = ev.target.closest("[data-week]");
+    if (!wk) return;
+    state.wp.week = Number(wk.dataset.week);
     renderWinProb();
   }
 
@@ -1394,6 +1529,20 @@
       if (document.visibilityState === "visible" && currentTab() === "live") loadLive();
     });
     $("#panel-teams").addEventListener("click", onTeamsClick);
+    $("#teamsRankChart").addEventListener("mouseover", (ev) => {
+      const cell = ev.target.closest("[data-team]");
+      const chart = $("#teamsRankChart .rank-chart");
+      if (!chart) return;
+      const team = cell?.dataset.team || "";
+      chart.classList.toggle("hot", Boolean(team));
+      $$("#teamsRankChart [data-team]").forEach((el) => el.classList.toggle("on", Boolean(team) && el.dataset.team === team));
+    });
+    $("#teamsRankChart").addEventListener("mouseleave", () => {
+      const chart = $("#teamsRankChart .rank-chart");
+      if (!chart) return;
+      chart.classList.remove("hot");
+      $$("#teamsRankChart [data-team]").forEach((el) => el.classList.remove("on"));
+    });
     $("#panel-winprob").addEventListener("click", onWinProbClick);
     $("#wpRefresh").addEventListener("click", () => loadWinProb(true));
     $("#teamsSync").addEventListener("click", syncTeams);

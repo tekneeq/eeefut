@@ -111,12 +111,13 @@ class DashboardState:
         try:
             board = self.winprob.get(season)
         except Exception:  # noqa: BLE001 - schedule download failure must not break the Teams tab
-            return {"by_team": {}, "weeks": [], "through_week": 0}
+            return {"by_team": {}, "weeks": [], "through_week": 0, "ladder": []}
         keys = ("power", "power_delta", "prev_power", "rank", "prev_rank", "rank_change", "elo", "history")
         return {
             "by_team": {r["team"]: {k: r.get(k) for k in keys} for r in board.get("ratings", [])},
             "weeks": board.get("power_weeks", []),
             "through_week": board.get("through_week", 0),
+            "ladder": board.get("rank_ladder") or [],
         }
 
 
@@ -226,6 +227,7 @@ def make_handler(state: DashboardState):
                             "teams": rows,
                             "power_weeks": power["weeks"],
                             "power_through_week": power["through_week"],
+                            "power_ladder": power["ladder"],
                             "ingest": state.ingestor.status(),
                         }
                     ),
