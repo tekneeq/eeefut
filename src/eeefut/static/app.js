@@ -607,12 +607,35 @@
   function powerBadge(p) {
     if (!p) return "";
     return `
-      <span class="power-badge" title="Power: points vs an average team · change since last week">
+      <span class="power-badge" title="Overall power: points vs an average team · change since last week">
         <i class="rank ${rankClass(p.rank, 32)}">#${p.rank}</i>
         <b>${signed(p.power)}</b>
         ${deltaHtml(p.power_delta)}
         ${rankChangeHtml(p.rank_change)}
       </span>`;
+  }
+
+  function sidePill(label, value, rank, title) {
+    const empty = value === null || value === undefined;
+    return `
+      <span class="side-pill" title="${esc(title)}">
+        <small>${esc(label)}</small>
+        <b>${empty ? "–" : signed(value)}</b>
+        ${empty || !rank ? "" : `<i class="rank ${rankClass(rank, 32)}">#${rank}</i>`}
+      </span>`;
+  }
+
+  function powerTrio(t) {
+    const p = t.power;
+    const s = t.side_power || {};
+    if (!p && s.offense == null && s.defense == null) return "";
+    return `
+      <div class="power-trio">
+        ${sidePill("OVR", p?.power, p?.rank, "Overall Elo power: points better or worse than an average team")}
+        ${sidePill("OFF", s.offense, s.offense_rank, "Offense power: scoring + box score vs a league-average offense")}
+        ${sidePill("DEF", s.defense, s.defense_rank, "Defense power: points and yards prevented vs a league-average defense")}
+        ${p ? sparkline(p.history) : ""}
+      </div>`;
   }
 
   function sparkline(history, width = 90, height = 26) {
@@ -697,7 +720,7 @@
           ${live}
           <span class="rec-big">${esc(t.record)}</span>
         </header>
-        ${t.power ? `<div class="power-line">${powerBadge(t.power)}${sparkline(t.power.history)}</div>` : ""}
+        ${powerTrio(t)}
         ${
           t.games
             ? `<div class="team-kpis">
@@ -738,6 +761,8 @@
     const winPct = (t) => (t.games ? (t.wins + 0.5 * (t.ties || 0)) / t.games : 0);
     const sorters = {
       power: (a, b) => (a.power?.rank ?? 99) - (b.power?.rank ?? 99) || winPct(b) - winPct(a),
+      offense: (a, b) => (a.side_power?.offense_rank ?? 99) - (b.side_power?.offense_rank ?? 99) || (b.side_power?.offense ?? -99) - (a.side_power?.offense ?? -99),
+      defense: (a, b) => (a.side_power?.defense_rank ?? 99) - (b.side_power?.defense_rank ?? 99) || (b.side_power?.defense ?? -99) - (a.side_power?.defense ?? -99),
       record: (a, b) => winPct(b) - winPct(a) || b.point_diff - a.point_diff,
       movers: (a, b) => Math.abs(b.power?.power_delta ?? 0) - Math.abs(a.power?.power_delta ?? 0),
     };
@@ -955,12 +980,13 @@
 
   function powerCard(d, color) {
     const p = d.power;
-    if (!p) return "";
-    const hist = p.history || [];
+    const s = d.side_power || {};
+    if (!p && s.offense == null && s.defense == null) return "";
+    const hist = p?.history || [];
     const first = hist[0];
     const last = hist[hist.length - 1];
     const season = first && last && hist.length > 1 ? last.power - first.power : null;
-    const weekLabel = p.history?.length ? (last.week === 0 ? "preseason" : `through week ${last.week}`) : "";
+    const weekLabel = hist.length ? (last.week === 0 ? "preseason" : `through week ${last.week}`) : "";
     const weekRows = hist
       .slice()
       .reverse()
@@ -981,14 +1007,15 @@
         <div class="power-head">
           <div>
             <h3>Power rating</h3>
-            <p class="lede small">Points vs an average team on a neutral field, ${esc(weekLabel)}. Updated after each week's games from the result and the box score.</p>
+            <p class="lede small">Overall is Elo (points vs an average team${weekLabel ? `, ${esc(weekLabel)}` : ""}). Offense and defense are the same unit from scoring and the box score — a +4 defense is four points stingier than average.</p>
           </div>
           <div class="power-kpis">
-            <span class="kpi"><b class="power-num">${signed(p.power)}</b><small>power</small></span>
-            <span class="kpi"><b>#${p.rank}</b><small>of 32 ${rankChangeHtml(p.rank_change)}</small></span>
+            <span class="kpi"><b class="power-num">${p ? signed(p.power) : "–"}</b><small>overall</small></span>
+            <span class="kpi"><b>${s.offense == null ? "–" : signed(s.offense)}</b><small>offense ${s.offense_rank ? `#${s.offense_rank}` : ""}</small></span>
+            <span class="kpi"><b>${s.defense == null ? "–" : signed(s.defense)}</b><small>defense ${s.defense_rank ? `#${s.defense_rank}` : ""}</small></span>
+            <span class="kpi"><b>${p ? `#${p.rank}` : "–"}</b><small>of 32 ${p ? rankChangeHtml(p.rank_change) : ""}</small></span>
             <span class="kpi"><b>${deltaHtml(p.power_delta)}</b><small>vs last week</small></span>
             <span class="kpi"><b>${season === null ? "–" : deltaHtml(season)}</b><small>since preseason</small></span>
-            <span class="kpi"><b>${p.elo}</b><small>Elo</small></span>
           </div>
         </div>
         ${powerChart(hist, color)}
@@ -1347,17 +1374,18 @@
     const weekly = board.record.weekly.filter((w) => w.decided || w.week === board.current_week);
     return `
       <div class="card wp-season">
-        <h3>Season record</h3>
+        <h3>Model picks</h3>
         <div class="wp-big">
           <span class="wp-big-rec">${esc(t.record)}</span>
           <span class="wp-big-pct">${pct(t.pct, 1)}</span>
         </div>
+        <p class="lede small">The model picked the winner in ${t.correct} of ${t.decided} finished games${t.decided ? ` (${esc(t.record)})` : ""}.</p>
         <div class="mini-kpis">
           <span><b>${t.decided}</b> decided</span>
-          <span><b>${t.pending}</b> pending</span>
+          <span><b>${t.pending}</b> still to play</span>
           <span>Brier <b>${t.brier ?? "–"}</b></span>
           <span>Margin off by <b>${t.avg_margin_error ?? "–"}</b> pts</span>
-          <span>Vegas <b>${t.market_decided ? `${t.market_correct}-${t.market_decided - t.market_correct}` : "–"}</b> (${pct(t.market_pct, 1)})</span>
+          <span title="How often the betting favorite won, on the same games">Vegas favorites <b>${t.market_decided ? `${t.market_correct}–${t.market_decided - t.market_correct}` : "–"}</b> (${pct(t.market_pct, 1)})</span>
         </div>
       </div>
       <div class="card wp-weekly">
@@ -1368,9 +1396,9 @@
               (w) => `
             <button type="button" class="wk ${w.week === state.wp.week ? "active" : ""} ${w.pct === null ? "pending" : w.pct >= 60 ? "good" : w.pct < 50 ? "bad" : ""}" data-week="${w.week}">
               <small>W${w.week}</small>
-              <b>${w.decided ? esc(w.record) : `${w.pending} tbd`}</b>
+              <b>${w.decided ? `Model ${esc(w.record)}` : `${w.pending} tbd`}</b>
               <span>${w.decided ? pct(w.pct) : "–"}</span>
-              ${w.market_decided ? `<i title="Vegas favourites">V ${w.market_correct}-${w.market_decided - w.market_correct}</i>` : ""}
+              ${w.market_decided ? `<i title="Vegas favorites on the same games">Vegas ${w.market_correct}–${w.market_decided - w.market_correct}</i>` : ""}
             </button>`
             )
             .join("")}

@@ -78,9 +78,10 @@
         <div class="panel-head">
           <h1>Teams</h1>
           <p class="lede">
-            Ordered by power number — points better or worse than an average team, re-rated after every week's games
-            from the score and how the game was played (yardage and turnover margin). Click a team for the weekly
-            power history, offense and defense ranks, tendencies, top players, and drive-by-drive game logs.
+            Ordered by overall power, with offense and defense power on every chiclet — each number is points better
+            or worse than an average unit. Overall is Elo; offense and defense come from scoring and the box score
+            (yardage and turnovers). Click a team for the weekly history, metric ranks, tendencies, top players, and
+            drive-by-drive game logs.
           </p>
         </div>
         <div class="toolbar live-toolbar" id="teamsToolbar">
@@ -89,7 +90,9 @@
             <input id="teamFilter" type="search" placeholder="KC, Ravens…" autocomplete="off" />
           </label>
           <div class="chip-group" id="teamSort" role="group" aria-label="Order teams by">
-            <button type="button" class="chip active" data-sort="power">Power</button>
+            <button type="button" class="chip active" data-sort="power">Overall</button>
+            <button type="button" class="chip" data-sort="offense">Offense</button>
+            <button type="button" class="chip" data-sort="defense">Defense</button>
             <button type="button" class="chip" data-sort="record">Record</button>
             <button type="button" class="chip" data-sort="movers">Movers</button>
           </div>
@@ -107,8 +110,9 @@
         <div class="panel-head">
           <h1>WinProb</h1>
           <p class="lede">
-            Pre-game win probability and expected margin for every scheduled game, the model's weekly record, and how
-            favourites actually fared by probability bucket.
+            Pre-game win probability and expected margin for every scheduled game. The big record (e.g. 10–6) is how
+            often the <b>model</b> picked the winner; Vegas 12–4 is how often the <b>betting favorite</b> won those
+            same games. Calibration buckets show how favourites actually fared.
           </p>
         </div>
         <div class="toolbar live-toolbar" id="wpToolbar">
