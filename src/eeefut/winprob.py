@@ -123,6 +123,16 @@ def power_of(elo: float, config: EloConfig = EloConfig()) -> float:
     return round((elo - config.mean) / config.points_per_elo, 1)
 
 
+def score_100(point_power: float | None, config: EloConfig = EloConfig()) -> float | None:
+    """Map a point-differential power number onto 0–100 (50 = league average).
+
+    Same curve as Elo win probability vs an average unit: about 7 points ≈ 75.
+    """
+    if point_power is None:
+        return None
+    return round(100.0 * elo_win_prob(float(point_power) * config.points_per_elo), 1)
+
+
 def performance_margin(
     home_yards: float, away_yards: float, home_turnovers: float, away_turnovers: float, *, yards_per_point: float = 15.0, points_per_turnover: float = 4.0
 ) -> float:
@@ -264,20 +274,31 @@ def run_model(
             continue
         w, l, t = records.get(team, [0, 0, 0])
         history = [
-            {"week": week, "elo": round(snap[team][0], 1), "power": power_of(snap[team][0], config), "rank": snap[team][1]}
+            {
+                "week": week,
+                "elo": round(snap[team][0], 1),
+                "power": power_of(snap[team][0], config),
+                "score": score_100(power_of(snap[team][0], config), config),
+                "rank": snap[team][1],
+            }
             for week, snap in ranked_snapshots
             if team in snap
         ]
         prev = history[-2] if len(history) >= 2 else None
+        now = power_of(elo, config)
+        now_score = score_100(now, config)
         table.append(
             {
                 "team": team,
                 "name": TEAM_NAMES.get(team, team),
                 "logo": team_logo(team),
                 "elo": round(elo, 1),
-                "power": power_of(elo, config),
+                "power": now,
+                "score": now_score,
                 "prev_power": prev["power"] if prev else None,
-                "power_delta": round(power_of(elo, config) - prev["power"], 1) if prev else None,
+                "prev_score": prev["score"] if prev else None,
+                "power_delta": round(now - prev["power"], 1) if prev else None,
+                "score_delta": round(now_score - prev["score"], 1) if prev and now_score is not None else None,
                 "prev_rank": prev["rank"] if prev else None,
                 "history": history,
                 "record": f"{w}-{l}" + (f"-{t}" if t else ""),
@@ -322,6 +343,7 @@ def rank_ladder(ratings: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                 "name": row.get("name") or row["team"],
                 "logo": row.get("logo") or team_logo(row["team"]),
                 "power": hit.get("power"),
+                "score": hit.get("score"),
             }
         columns.append({"week": week, "ranks": [by_rank[i] for i in range(1, 33) if i in by_rank]})
     return columns
@@ -556,7 +578,7 @@ def build_dashboard(model: dict[str, Any]) -> dict[str, Any]:
             "name": "Elo + margin of victory",
             "hfa_points": round(EloConfig().hfa / EloConfig().points_per_elo, 1),
             "k": EloConfig().k,
-            "power_scale": "points vs. an average team on a neutral field",
+            "power_scale": "0–100 (50 = an average team on a neutral field)",
         },
         "weeks": weeks,
         "current_week": current_week(games),

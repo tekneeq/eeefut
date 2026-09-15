@@ -723,8 +723,10 @@ def test_team_table_ranks_and_detail(tmp_path, monkeypatch):
     assert hom["ranks"]["defense"]["turnovers_pg"] == 1
     assert table[0]["abbr"] in ("HOM", "FOR")  # winners sort first
     # Side power: HOM scored 27 on 400 yards / 1 TO; AWY 10 on 300 / 2 TO
-    assert hom["side_power"]["offense"] > 0 > by["AWY"]["side_power"]["offense"]
-    assert hom["side_power"]["defense"] > 0 > by["AWY"]["side_power"]["defense"]
+    assert hom["side_power"]["offense_pts"] > 0 > by["AWY"]["side_power"]["offense_pts"]
+    assert hom["side_power"]["defense_pts"] > 0 > by["AWY"]["side_power"]["defense_pts"]
+    assert hom["side_power"]["offense"] > 50 > by["AWY"]["side_power"]["offense"]
+    assert hom["side_power"]["defense"] > 50 > by["AWY"]["side_power"]["defense"]
     assert hom["side_power"]["offense_rank"] == 1 and hom["side_power"]["defense_rank"] == 1
     assert by["AWY"]["side_power"]["offense_rank"] == 4
 
@@ -826,7 +828,7 @@ def test_dashboard_teams_api(tmp_path, monkeypatch):
         assert {t["abbr"] for t in teams["teams"]} == {"HOM", "AWY"}
         assert all(t["power"] is None for t in teams["teams"])  # synthetic teams have no rating
         hom = next(t for t in teams["teams"] if t["abbr"] == "HOM")
-        assert hom["side_power"]["offense"] > 0 and hom["side_power"]["defense"] > 0
+        assert hom["side_power"]["offense"] > 50 and hom["side_power"]["defense"] > 50
         assert hom["side_power"]["offense_rank"] == 1
         assert teams["metrics"][0]["key"] == "points_pg"
 
@@ -989,7 +991,7 @@ def test_winprob_service_caches_and_uses_store_results(tmp_path, monkeypatch):
 
 
 def test_power_blend_helpers():
-    from eeefut.winprob import EloConfig, blended_margin, performance_margin, power_of
+    from eeefut.winprob import EloConfig, blended_margin, performance_margin, power_of, score_100
 
     assert performance_margin(400, 300, 1, 2) == pytest.approx(100 / 15 + 4)
     assert blended_margin(22, 12.9) == pytest.approx(0.7 * 22 + 0.3 * 12.9)
@@ -1001,6 +1003,10 @@ def test_power_blend_helpers():
     cfg = EloConfig()
     assert power_of(cfg.mean, cfg) == 0.0
     assert power_of(cfg.mean + cfg.points_per_elo * 7, cfg) == 7.0
+    assert score_100(0) == 50.0
+    assert score_100(None) is None
+    assert 72 <= score_100(7) <= 75  # ~7 pts ≈ 73–74 / 100
+    assert score_100(-7) == pytest.approx(100 - score_100(7), abs=0.11)
 
 
 POWER_ROWS = _wp_rows(
@@ -1016,7 +1022,7 @@ POWER_ROWS = _wp_rows(
 
 
 def test_power_history_tracks_weekly_changes_and_blends_performance():
-    from eeefut.winprob import run_model
+    from eeefut.winprob import run_model, score_100
 
     plain = run_model(POWER_ROWS, 2026, extra_results={"501": (27, 10)})
     blended = run_model(POWER_ROWS, 2026, extra_results={"501": (27, 10)}, extra_perf={"501": -12.0})
@@ -1030,6 +1036,9 @@ def test_power_history_tracks_weekly_changes_and_blends_performance():
     assert kc["history"][0]["rank"] == 1  # preseason baseline carried over from 2025
     assert kc["power_delta"] > 0 and buf["power_delta"] < 0
     assert kc["power_delta"] == pytest.approx(kc["power"] - kc["prev_power"], abs=0.11)
+    assert kc["score"] > 50 > 0 and kc["score_delta"] > 0
+    assert kc["score"] == score_100(kc["power"])
+    assert [h["score"] for h in kc["history"]] == [score_100(h["power"]) for h in kc["history"]]
     assert kc["rank_change"] == 0
     assert sum(r["rank_change"] for r in plain["ratings"]) == 0
     # LV lost as a home favourite, so it drops; DEN climbs
@@ -1098,6 +1107,7 @@ def test_dashboard_teams_api_includes_power(tmp_path, monkeypatch):
         assert teams["power_ladder"][0]["week"] == 1 and teams["power_ladder"][0]["ranks"][0]["team"] == "KC"
         rows = {t["abbr"]: t for t in teams["teams"]}
         assert rows["KC"]["power"]["rank"] == 1 and rows["KC"]["power"]["power_delta"] > 0
+        assert rows["KC"]["power"]["score"] > 50 and rows["KC"]["power"]["score_delta"] > 0
         assert rows["BUF"]["power"]["power_delta"] < 0 and len(rows["BUF"]["power"]["history"]) == 2
 
         detail = json.loads(urllib.request.urlopen(base + "/api/teams/kc", timeout=5).read())
