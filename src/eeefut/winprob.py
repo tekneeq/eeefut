@@ -572,7 +572,7 @@ def current_week(games: list[dict[str, Any]]) -> int:
 def build_dashboard(model: dict[str, Any]) -> dict[str, Any]:
     games = model["games"]
     weeks = sorted({g["week"] for g in games})
-    return {
+    board = {
         "season": model["season"],
         "model": {
             "name": "Elo + margin of victory",
@@ -592,6 +592,24 @@ def build_dashboard(model: dict[str, Any]) -> dict[str, Any]:
         "rank_ladder": model.get("rank_ladder") or rank_ladder(model.get("ratings") or []),
         "generated_at": int(time.time()),
     }
+    attach_latest_ranks(board["games"], board["ratings"], board["team_buckets"])
+    return board
+
+
+def attach_latest_ranks(
+    games: list[dict[str, Any]],
+    ratings: list[dict[str, Any]],
+    team_buckets: list[dict[str, Any]] | None = None,
+) -> None:
+    """Stamp each game/team row with the latest weekly power rank (after the last completed week)."""
+    by = {r["team"]: r for r in ratings}
+    for g in games:
+        home, away = by.get(g["home"]), by.get(g["away"])
+        g["home_rank"] = home["rank"] if home else None
+        g["away_rank"] = away["rank"] if away else None
+    for t in team_buckets or []:
+        row = by.get(t["team"])
+        t["rank"] = row["rank"] if row else None
 
 
 class WinProbService:

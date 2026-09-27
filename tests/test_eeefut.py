@@ -960,6 +960,8 @@ def test_winprob_model_pregame_probabilities_and_results():
     assert played_bucket["home"]["wins"] >= 1 or played_bucket["away"]["wins"] >= 1
     assert all(b["expected_pct"] is None or b["lo"] * 100 <= b["expected_pct"] <= b["hi"] * 100 for b in buckets.values())
 
+    assert all(g.get("home_rank") is None and g.get("away_rank") is None for g in board["games"])
+
     team_rows = {t["team"]: t for t in board["team_buckets"]}
     assert team_rows["A"]["favored"]["record"] == "2-0"
     assert team_rows["B"]["underdog"]["record"] == "0-1"
@@ -1120,9 +1122,13 @@ def test_dashboard_teams_api_includes_power(tmp_path, monkeypatch):
         assert board["ratings"][0]["power"] > 0 and "history" in board["ratings"][0]
         game = next(g for g in board["games"] if g["id"] == "2026_01_BUF_KC")
         assert game["performance_margin"] == 10.7  # rounded to a tenth for display
+        assert game["home_rank"] == 1 and game["home"] == "KC"
+        assert game["away_rank"] == next(r["rank"] for r in board["ratings"] if r["team"] == "BUF")
 
         html = urllib.request.urlopen(base + "/", timeout=5).read().decode()
         assert 'id="teamSort"' in html and 'id="teamsRankChart"' in html and 'id="wpWeekChart"' in html
+        js = urllib.request.urlopen(base + "/static/app.js", timeout=5).read().decode()
+        assert "pwrk" in js and "Power rank after the last completed week" in js
     finally:
         httpd.shutdown()
         httpd.server_close()
