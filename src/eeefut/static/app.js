@@ -1298,7 +1298,11 @@
       return `
         <div class="team-row ${side} ${isFav ? "fav" : ""} ${won ? "winner" : ""} ${lost ? "loser" : ""}" style="--team:${teamHex(abbr)}">
           <img class="logo" src="${esc(g[`${side}_logo`])}" alt="" loading="lazy" onerror="this.style.visibility='hidden'" />
-          <span class="tname"><b>${esc(abbr)}</b><span class="full">${esc(g[`${side}_name`])}</span>
+          <span class="tname"><b>${esc(abbr)}</b>${
+            g[`${side}_rank`]
+              ? `<i class="pwrk" title="Power rank after the last completed week">#${g[`${side}_rank`]}</i>`
+              : ""
+          }<span class="full">${esc(g[`${side}_name`])}</span>
             <small class="rec">Elo ${g[`${side}_elo`]}</small></span>
           <span class="wp-pct ${isFav ? "fav" : ""}">${pct(g[`${side}_prob`] * 100, 1)}</span>
           <span class="tscore">${g.played ? g[`${side}_score`] : ""}</span>
@@ -1452,7 +1456,7 @@
         ${board.team_buckets
           .map(
             (t) => `
-          <span class="tb-team"><img class="logo" src="${esc(t.logo)}" alt="" loading="lazy" /> ${esc(t.team)}</span>
+          <span class="tb-team"><img class="logo" src="${esc(t.logo)}" alt="" loading="lazy" /> ${esc(t.team)}${t.rank ? ` <i class="pwrk">#${t.rank}</i>` : ""}</span>
           <span class="tb-c">${esc(t.favored.record)}</span>
           <span class="tb-c muted">${esc(t.underdog.record)}</span>
           ${keys
@@ -1482,7 +1486,7 @@
           <button type="button" class="rating-row" data-team="${esc(r.team)}" title="Open ${esc(r.name)} in Teams">
             <span class="rk">#${r.rank}</span>
             <img class="logo" src="${esc(r.logo)}" alt="" loading="lazy" />
-            <span class="rn"><b>${esc(r.team)}</b> ${esc(r.name)}</span>
+            <span class="rn"><b>${esc(r.team)}</b> <i class="pwrk">#${r.rank}</i> ${esc(r.name)}</span>
             <span class="rr">${esc(r.record)}</span>
             <span class="rp">${fmtScore(r.score ?? score100(r.power))}</span>
             <span class="rd">${deltaHtml(r.score_delta ?? r.power_delta)}</span>

@@ -1988,6 +1988,21 @@ main {
   color: var(--accent);
 }
 
+.pwrk {
+  display: inline-block;
+  font-style: normal;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin-left: 0.28rem;
+}
+
+.wp-card .team-row.fav .pwrk,
+.rating-row .pwrk {
+  color: var(--accent);
+}
+
 .wp-pct {
   font-family: var(--mono);
   font-size: 0.95rem;
