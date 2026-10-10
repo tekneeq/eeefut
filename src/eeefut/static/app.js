@@ -27,9 +27,10 @@
     loading: false,
   };
 
-  state.wp = { board: null, week: null, loading: false, error: null };
+  state.wp = { board: null, week: null, timer: null, loading: false, error: null };
 
   const LIVE_REFRESH_MS = 20000;
+  const WP_REFRESH_MS = 60000;
   const VALID_TABS = new Set(["matches", "live", "teams", "winprob", "similar"]);
 
   const $ = (sel) => document.querySelector(sel);
@@ -65,7 +66,12 @@
       loadTeams();
       if (!location.hash.startsWith("#teams")) history.replaceState(null, "", "#teams");
     }
-    if (name === "winprob") loadWinProb();
+    if (name === "winprob") {
+      loadWinProb();
+      scheduleWinProb();
+    } else {
+      stopWinProb();
+    }
   }
 
   // ---------------------------------------------------------------- Matches
@@ -1241,6 +1247,20 @@
   };
   const teamHex = (abbr) => `#${TEAM_COLORS[abbr] || "555555"}`;
 
+  function stopWinProb() {
+    if (state.wp.timer) {
+      clearInterval(state.wp.timer);
+      state.wp.timer = null;
+    }
+  }
+
+  function scheduleWinProb() {
+    stopWinProb();
+    state.wp.timer = setInterval(() => {
+      if (document.visibilityState === "visible" && currentTab() === "winprob") loadWinProb();
+    }, WP_REFRESH_MS);
+  }
+
   async function loadWinProb(force = false) {
     if (state.wp.loading) return;
     state.wp.loading = true;
@@ -1568,7 +1588,9 @@
       });
     });
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible" && currentTab() === "live") loadLive();
+      if (document.visibilityState !== "visible") return;
+      if (currentTab() === "live") loadLive();
+      if (currentTab() === "winprob") loadWinProb();
     });
     $("#panel-teams").addEventListener("click", onTeamsClick);
     $("#teamsRankChart").addEventListener("mouseover", (ev) => {

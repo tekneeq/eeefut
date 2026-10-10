@@ -22,7 +22,11 @@ from eeefut.data import GAMES_URL, TEAM_NAMES, _fetch_text
 
 TEAM_ALIASES = {"OAK": "LV", "SD": "LAC", "STL": "LA", "LAR": "LA", "WSH": "WAS", "JAC": "JAX"}
 ESPN_LOGO_SLUG = {"LA": "lar", "WAS": "wsh"}
-GAMES_CSV_TTL = 6 * 3600.0
+# How long a process may keep a downloaded schedule before asking nflverse again.
+# Finals that land sooner (Thursday night, before this file updates) come from the scoreboard.
+GAMES_CSV_TTL = 15 * 60.0
+SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+SCOREBOARD_TTL = 45.0
 
 BUCKETS: list[tuple[str, float, float]] = [
     ("50-55", 0.50, 0.55),
@@ -165,8 +169,9 @@ def run_model(
     """Replay Elo over all rows; return ratings, weekly power history, and predictions for `season`.
 
     `extra_results` maps ESPN event id -> (home_score, away_score) for games nflverse has
-    not scored yet (e.g. pulled from the live GameStore). `extra_perf` maps ESPN event id
-    -> box-score performance margin (home minus away, in points) used to blend the update.
+    not scored yet (scoreboard or the live GameStore). ``season:week:AWAY@HOME`` is also
+    accepted when the event id is missing. `extra_perf` maps ESPN event id -> box-score
+    performance margin (home minus away, in points) used to blend the update.
     """
     extra_results = extra_results or {}
     extra_perf = extra_perf or {}
@@ -215,7 +220,9 @@ def run_model(
         home_score = _int(row.get("home_score"))
         away_score = _int(row.get("away_score"))
         if home_score is None or away_score is None:
-            extra = extra_results.get(espn_id)
+            extra = extra_results.get(espn_id) if espn_id else None
+            if not extra:
+                extra = extra_results.get(f"{row_season}:{row_week}:{away}@{home}")
             if extra:
                 home_score, away_score = extra
         played = home_score is not None and away_score is not None
@@ -623,25 +630,47 @@ class WinProbService:
         perf_provider: Callable[[int], dict[str, float]] | None = None,
         ttl: float = 300.0,
         rows: list[dict[str, str]] | None = None,
+        rows_ttl: float = GAMES_CSV_TTL,
     ) -> None:
         self._fetch_text = fetch_text
         self._results_provider = results_provider
         self._perf_provider = perf_provider
         self._ttl = ttl
         self._rows = rows
+        self._rows_fixed = rows is not None
+        self._rows_ttl = rows_ttl
+        self._rows_at = 0.0
         self._lock = threading.Lock()
         self._cache: dict[int, tuple[float, Any, dict[str, Any]]] = {}
 
     def rows(self) -> list[dict[str, str]]:
-        if self._rows is None:
-            self._rows = load_games_csv(self._fetch_text)
+        if self._rows_fixed:
+            return self._rows or []
+        now = time.time()
+        if self._rows is None or now - self._rows_at >= self._rows_ttl:
+            self._rows = load_games_csv(self._fetch_text, ttl=self._rows_ttl)
+            self._rows_at = now
         return self._rows
 
     def refresh_rows(self) -> None:
+        if self._rows_fixed:
+            return
         path = cache_root() / "nflverse" / "games.csv"
         if path.is_file():
             path.unlink()
         self._rows = None
+        self._rows_at = 0.0
+
+    def _rows_token(self) -> tuple[Any, ...]:
+        """Changes when the schedule file is replaced, so a cached board is not reused."""
+        if self._rows_fixed:
+            return ("fixed",)
+        path = cache_root() / "nflverse" / "games.csv"
+        try:
+            st = path.stat()
+        except OSError:
+            return ("mem", self._rows_at)
+        return (st.st_mtime_ns, st.st_size)
 
     def latest_season(self) -> int:
         return max((_int(r.get("season")) or 0) for r in self.rows())
@@ -649,10 +678,11 @@ class WinProbService:
     def get(self, season: int | None = None, *, force: bool = False) -> dict[str, Any]:
         if force:
             self.refresh_rows()
+        self.rows()
         season = season or self.latest_season()
         extra = self._results_provider(season) if self._results_provider else {}
         perf = self._perf_provider(season) if self._perf_provider else {}
-        sig = (tuple(sorted(extra.items())), tuple(sorted(perf.items())))
+        sig = (self._rows_token(), tuple(sorted(extra.items())), tuple(sorted(perf.items())))
         now = time.time()
         with self._lock:
             hit = self._cache.get(season)
@@ -663,6 +693,102 @@ class WinProbService:
         with self._lock:
             self._cache[season] = (now, sig, board)
         return board
+
+
+def finals_from_scoreboard(payload: dict[str, Any]) -> dict[str, tuple[int, int]]:
+    """Map a scoreboard payload to final scores.
+
+    Keys are the ESPN event id and ``season:week:AWAY@HOME`` (nflverse abbreviations).
+    Scheduled games report 0-0 and are ignored.
+    """
+    season = _int((payload.get("season") or {}).get("year")) or 0
+    week = _int((payload.get("week") or {}).get("number")) or 0
+    out: dict[str, tuple[int, int]] = {}
+    for event in payload.get("events") or []:
+        comp = (event.get("competitions") or [{}])[0]
+        status = comp.get("status") or event.get("status") or {}
+        stype = status.get("type") or {}
+        if str(stype.get("state") or "") != "post":
+            continue
+        if stype.get("completed") is False:
+            continue
+        competitors = comp.get("competitors") or []
+        home = next((c for c in competitors if c.get("homeAway") == "home"), None)
+        away = next((c for c in competitors if c.get("homeAway") == "away"), None)
+        if not home or not away:
+            continue
+        home_score, away_score = _int(home.get("score")), _int(away.get("score"))
+        if home_score is None or away_score is None:
+            continue
+        if stype.get("completed") is not True and home_score == 0 and away_score == 0:
+            continue
+        pair = (home_score, away_score)
+        event_id = str(event.get("id") or comp.get("id") or "")
+        if event_id:
+            out[event_id] = pair
+        home_abbr = norm_team(str((home.get("team") or {}).get("abbreviation") or ""))
+        away_abbr = norm_team(str((away.get("team") or {}).get("abbreviation") or ""))
+        if season and week and home_abbr and away_abbr:
+            out[f"{season}:{week}:{away_abbr}@{home_abbr}"] = pair
+    return out
+
+
+def _fetch_scoreboard(url: str) -> dict[str, Any]:
+    from eeefut.live import fetch_json
+
+    payload = fetch_json(url)
+    return payload if isinstance(payload, dict) else {}
+
+
+class ScoreboardResults:
+    """Final scores from the ESPN scoreboard for the current week and the week before.
+
+    nflverse often posts a Thursday score hours later, and the game store only has a
+    game after the Live tab has fetched its box score. The scoreboard already knows.
+    """
+
+    def __init__(
+        self,
+        fetch: Callable[[str], dict[str, Any]] | None = None,
+        *,
+        ttl: float = SCOREBOARD_TTL,
+    ) -> None:
+        self._fetch = fetch or _fetch_scoreboard
+        self._ttl = ttl
+        self._lock = threading.Lock()
+        self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+    def _payload(self, url: str) -> dict[str, Any]:
+        now = time.time()
+        with self._lock:
+            hit = self._cache.get(url)
+            if hit and now - hit[0] < self._ttl:
+                return hit[1]
+        try:
+            payload = self._fetch(url)
+        except Exception:  # noqa: BLE001 - a scoreboard miss must not blank the WinProb tab
+            with self._lock:
+                hit = self._cache.get(url)
+            return hit[1] if hit else {}
+        if not isinstance(payload, dict):
+            payload = {}
+        with self._lock:
+            self._cache[url] = (now, payload)
+        return payload
+
+    def __call__(self, season: int) -> dict[str, tuple[int, int]]:
+        current = self._payload(SCOREBOARD_URL)
+        year = _int((current.get("season") or {}).get("year"))
+        week = _int((current.get("week") or {}).get("number")) or 0
+        if year != season:
+            return {}
+        payloads = [current]
+        if week > 1:
+            payloads.insert(0, self._payload(f"{SCOREBOARD_URL}?dates={season}&seasontype=2&week={week - 1}"))
+        out: dict[str, tuple[int, int]] = {}
+        for payload in payloads:
+            out.update(finals_from_scoreboard(payload))
+        return out
 
 
 def store_results(store: Any, season: int) -> dict[str, tuple[int, int]]:
