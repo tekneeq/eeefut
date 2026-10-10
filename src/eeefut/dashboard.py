@@ -18,7 +18,7 @@ from eeefut.models import Game, GameSnapshot
 from eeefut.similar import find_similar
 from eeefut.store import GameStore
 from eeefut.teams import build_player_table, build_team_table, metric_specs, team_detail, team_summary_row
-from eeefut.winprob import WinProbService, norm_team, store_performance, store_results
+from eeefut.winprob import ScoreboardResults, WinProbService, norm_team, store_performance, store_results
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -40,8 +40,9 @@ class DashboardState:
         self.store = store or GameStore()
         self.live = live or LiveFeed(on_summary=self._persist_live_summary)
         self.ingestor = ingestor or Ingestor(self.store)
+        self.scoreboard = ScoreboardResults()
         self.winprob = winprob or WinProbService(
-            results_provider=lambda yr: store_results(self.store, yr),
+            results_provider=self._winprob_results,
             perf_provider=lambda yr: store_performance(self.store, yr),
         )
         self._teams_lock = threading.Lock()
@@ -57,6 +58,16 @@ class DashboardState:
         except ValueError:
             self.history = []
         self.corpus = [*self.history, *self.matches]
+
+    def _winprob_results(self, season: int) -> dict[str, tuple[int, int]]:
+        """Scoreboard finals first, saved box scores on top. A Live-tab miss no longer hides a final."""
+        merged: dict[str, tuple[int, int]] = {}
+        try:
+            merged.update(self.scoreboard(season))
+        except Exception:  # noqa: BLE001 - WinProb still runs on the schedule file alone
+            pass
+        merged.update(store_results(self.store, season))
+        return merged
 
     def _persist_live_summary(self, game: dict[str, Any], summary: dict[str, Any]) -> None:
         """Called by LiveFeed for every freshly fetched box score; keeps finals once."""

@@ -992,6 +992,131 @@ def test_winprob_service_caches_and_uses_store_results(tmp_path, monkeypatch):
     assert board2["current_week"] == 2  # one week-2 game still pending
 
 
+def test_scoreboard_final_shows_before_nflverse_and_ignores_scheduled(tmp_path, monkeypatch):
+    """A finished Thursday game is on the scoreboard before nflverse (or the game store) has it."""
+    from eeefut.dashboard import DashboardState
+    from eeefut.live import LiveFeed
+    from eeefut.winprob import ScoreboardResults, WinProbService, finals_from_scoreboard, run_model
+
+    rows = _wp_rows(
+        "2026_05_TB_DAL,2026,REG,5,2026-10-08,Thursday,20:15,TB,,DAL,,Home,401872980,-120,100,-1.5",
+        "2026_05_PHI_JAX,2026,REG,5,2026-10-11,Sunday,09:30,PHI,,JAX,,Home,401872981,130,-150,-3",
+    )
+    payload = {
+        "season": {"year": 2026, "type": 2},
+        "week": {"number": 5},
+        "events": [
+            {
+                "id": "401872980",
+                "competitions": [
+                    {
+                        "status": {"type": {"state": "post", "completed": True, "shortDetail": "Final"}},
+                        "competitors": [
+                            {"homeAway": "home", "score": "16", "team": {"abbreviation": "DAL"}},
+                            {"homeAway": "away", "score": "24", "team": {"abbreviation": "TB"}},
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "401872981",
+                "competitions": [
+                    {
+                        "status": {"type": {"state": "pre", "completed": False}},
+                        "competitors": [
+                            {"homeAway": "home", "score": "0", "team": {"abbreviation": "JAX"}},
+                            {"homeAway": "away", "score": "0", "team": {"abbreviation": "PHI"}},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+    finals = finals_from_scoreboard(payload)
+    assert finals["401872980"] == (16, 24)
+    assert finals["2026:5:TB@DAL"] == (16, 24)
+    assert "401872981" not in finals
+
+    aliased = finals_from_scoreboard(
+        {
+            "season": {"year": 2026},
+            "week": {"number": 5},
+            "events": [
+                {
+                    "id": "9",
+                    "competitions": [
+                        {
+                            "status": {"type": {"state": "post", "completed": True}},
+                            "competitors": [
+                                {"homeAway": "home", "score": "20", "team": {"abbreviation": "WSH"}},
+                                {"homeAway": "away", "score": "17", "team": {"abbreviation": "LAR"}},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    assert aliased["2026:5:LA@WAS"] == (20, 17)
+
+    games = {g["id"]: g for g in run_model(rows, 2026, extra_results=finals)["games"]}
+    assert games["2026_05_TB_DAL"]["played"]
+    assert (games["2026_05_TB_DAL"]["home_score"], games["2026_05_TB_DAL"]["away_score"]) == (16, 24)
+    assert games["2026_05_TB_DAL"]["result"]["winner"] == "TB"
+    assert games["2026_05_PHI_JAX"]["played"] is False
+
+    blank = _wp_rows("2026_05_TB_DAL,2026,REG,5,2026-10-08,Thursday,20:15,TB,,DAL,,Home,,-120,100,-1.5")
+    by_matchup = run_model(blank, 2026, extra_results={"2026:5:TB@DAL": (16, 24)})
+    assert by_matchup["games"][0]["played"] and by_matchup["games"][0]["away_score"] == 24
+
+    urls: list[str] = []
+
+    def fetch(url: str) -> dict:
+        urls.append(url)
+        if "week=4" in url:
+            return {"season": {"year": 2026}, "week": {"number": 4}, "events": []}
+        return payload
+
+    board = WinProbService(rows=rows, results_provider=ScoreboardResults(fetch, ttl=0)).get(2026)
+    thu = next(g for g in board["games"] if g["away"] == "TB")
+    sun = next(g for g in board["games"] if g["away"] == "PHI")
+    assert thu["played"] and thu["result"]["winner"] == "TB" and thu["away_score"] == 24 and thu["home_score"] == 16
+    assert sun["played"] is False
+    assert any("week=4" in url for url in urls)
+
+    monkeypatch.setenv("EEEFUT_CACHE", str(tmp_path))
+    save_season("NFL:2025", inject_chiefs_preset([], "NFL:2025"))
+    state = DashboardState("NFL:2025", live=LiveFeed(lambda url: {}), winprob=WinProbService(rows=rows))
+    state.scoreboard = ScoreboardResults(fetch, ttl=0)
+    merged = state._winprob_results(2026)  # noqa: SLF001
+    assert merged["401872980"] == (16, 24)
+    state.store.save_summary(_summary_fixture("401872980", ("1", "DAL", 99), ("2", "TB", 1)))
+    merged = state._winprob_results(2026)  # noqa: SLF001
+    assert merged["401872980"] == (99, 1)  # a stored box score wins over the scoreboard
+
+
+def test_winprob_reloads_schedule_when_the_file_goes_stale(tmp_path, monkeypatch):
+    from eeefut.winprob import WinProbService
+
+    monkeypatch.setenv("EEEFUT_CACHE", str(tmp_path))
+    phase = {"scored": False}
+
+    def fetch(_url: str) -> str:
+        away, home = ("24", "16") if phase["scored"] else ("", "")
+        return (
+            WP_CSV_HEADER
+            + f"\n2026_05_TB_DAL,2026,REG,5,2026-10-08,Thursday,20:15,TB,{away},DAL,{home},Home,401872980,-120,100,-1.5\n"
+        )
+
+    svc = WinProbService(fetch_text=fetch, rows_ttl=3600, ttl=0)
+    assert svc.get(2026)["games"][0]["played"] is False
+    phase["scored"] = True
+    svc._rows_ttl = 0  # noqa: SLF001 - the on-disk copy is still inside the old window
+    svc._rows_at = 0  # noqa: SLF001
+    game = svc.get(2026)["games"][0]
+    assert game["played"] and game["away_score"] == 24 and game["home_score"] == 16
+
+
 def test_power_blend_helpers():
     from eeefut.winprob import EloConfig, blended_margin, performance_margin, power_of, score_100
 
